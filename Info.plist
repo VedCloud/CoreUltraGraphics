@@ -50,16 +50,6 @@
         <string>1.0.0</string>
         <key>com.apple.iokit.IOGraphicsFamily</key>
         <string>1.0.0</string>
-        <key>com.apple.iokit.IOAcceleratorFamily2</key>
-        <string>1.0.0</string>
-        <key>com.apple.iokit.IOGPUDevice</key>
-        <string>1.0.0</string>
-        <key>com.apple.iokit.IOGraphicsAccelerator</key>
-        <string>1.0.0</string>
-        <key>com.apple.iokit.IOGraphicsDevice</key>
-        <string>1.0.0</string>
-        <key>com.apple.iokit.IOFramebuffer</key>
-        <string>1.0.0</string>
     </dict>
 </dict>
 </plist>

@@ -1,11 +1,14 @@
 #include "CoreUltraGraphicsDriver.h"
 
-#define super IOFramebuffer
-OSDefineMetaClassAndStructors(CoreUltraGraphicsDriver, IOFramebuffer);
+#define super IOService
+OSDefineMetaClassAndStructors(CoreUltraGraphicsDriver, IOService);
 
-// Display-engine registers. READ ONLY unless hwWritesEnabled.
-// Offsets are Gen12-style (display-version-14); verify against Intel docs.
-static const struct DumpReg { const char *name; uint32_t offset; } kDumpRegs[] = {
+// Display-engine registers to log. READ ONLY: nothing in this file writes to the GPU.
+// Offsets are the Gen12-style layout used by Linux i915/xe; verify them against the
+// display-version-14 sources. A value of 0xFFFFFFFF usually means the register is
+// unreachable (power well off) or the offset is wrong for this platform.
+struct DumpReg { const char *name; uint32_t offset; };
+static const DumpReg kDumpRegs[] = {
     { "PWR_WELL_CTL1",    0x45400 },
     { "HTOTAL_A",         0x60000 },
     { "VTOTAL_A",         0x6000C },
@@ -18,6 +21,7 @@ static const struct DumpReg { const char *name; uint32_t offset; } kDumpRegs[] =
     { "PLANE_SIZE_1_A",   0x70190 },
     { "PLANE_SURF_1_A",   0x7019C },
 };
+#define PIPE_SRC_A_OFFSET 0x6001C
 
 bool CoreUltraGraphicsDriver::init(OSDictionary *dict)
 {
@@ -30,11 +34,6 @@ bool CoreUltraGraphicsDriver::init(OSDictionary *dict)
     scratchVirt = nullptr;
     scratchPhys = 0;
     scratchSize = 0;
-    fbMemory = nullptr;
-    fbMap = nullptr;
-    fbVirt = nullptr;
-    fbPhys = 0;
-    fbWidth = fbHeight = fbDepth = fbPitch = fbBytesPerRow = 0;
     return true;
 }
 
@@ -46,27 +45,13 @@ void CoreUltraGraphicsDriver::free()
 
 IOService *CoreUltraGraphicsDriver::probe(IOService *provider, SInt32 *score)
 {
-    IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider);
-    if (!pci) return nullptr;
-
-    UInt16 vendor = pci->configRead16(kIOPCIConfigVendorID);
-    UInt16 device = pci->configRead16(kIOPCIConfigDeviceID);
-    if (vendor != 0x8086 || device != 0x7D45) return nullptr;
-
-    *score = 5000;
-    return this;
+    return super::probe(provider, score);
 }
 
 uint32_t CoreUltraGraphicsDriver::readReg(uint32_t offset) const
 {
     if (!mmioBase || mmioLength < 4 || offset > mmioLength - 4) return 0xFFFFFFFFu;
     return OSReadLittleInt32((const volatile void *)mmioBase, offset);
-}
-
-void CoreUltraGraphicsDriver::writeReg(uint32_t offset, uint32_t value)
-{
-    if (!mmioBase || mmioLength < 4 || offset > mmioLength - 4) return;
-    OSWriteLittleInt32((volatile void *)((uint8_t *)mmioBase + offset), 0, value);
 }
 
 void CoreUltraGraphicsDriver::logPciIdentity()
@@ -87,93 +72,11 @@ void CoreUltraGraphicsDriver::dumpDisplayState()
               kDumpRegs[i].name, (unsigned)kDumpRegs[i].offset,
               (unsigned)readReg(kDumpRegs[i].offset));
     }
-    uint32_t src = readReg(0x6001C);
+    uint32_t src = readReg(PIPE_SRC_A_OFFSET);
     if (src != 0xFFFFFFFFu && src != 0) {
         IOLog("CoreUltraGraphics: PIPE_SRC_A decodes to %ux%u\n",
               (unsigned)(((src >> 16) & 0x1FFF) + 1), (unsigned)((src & 0x1FFF) + 1));
     }
-}
-
-void CoreUltraGraphicsDriver::releaseScratchBuffer()
-{
-    if (scratchDesc) {
-        scratchDesc->complete();
-        scratchDesc->release();
-        scratchDesc = nullptr;
-    }
-    scratchVirt = nullptr;
-    scratchPhys = 0;
-    scratchSize = 0;
-}
-
-void CoreUltraGraphicsDriver::releaseResources()
-{
-    releaseScratchBuffer();
-    if (fbMap) { fbMap->release(); fbMap = nullptr; }
-    if (fbMemory) { fbMemory->complete(); fbMemory->release(); fbMemory = nullptr; }
-    fbVirt = nullptr;
-    fbPhys = 0;
-    mmioBase = nullptr;
-    mmioLength = 0;
-    if (mmioMap) { mmioMap->release(); mmioMap = nullptr; }
-    if (pciDevice) { pciDevice->release(); pciDevice = nullptr; }
-}
-
-bool CoreUltraGraphicsDriver::initDisplayEngine()
-{
-    // Power well enable for display (Gen12 PWR_WELL_CTL1)
-    uint32_t pwr = readReg(0x45400);
-    if (!(pwr & (1u << 31))) {
-        writeReg(0x45400, pwr | (1u << 31));
-        IOSleep(10);
-        IOLog("CoreUltraGraphics: enabled display power well\n");
-    }
-    return true;
-}
-
-bool CoreUltraGraphicsDriver::initFramebuffer()
-{
-    // Default to 1920x1080 @ 32bpp
-    fbWidth = 1920;
-    fbHeight = 1080;
-    fbDepth = 32;
-    fbBytesPerRow = fbWidth * (fbDepth / 8);
-    fbPitch = fbBytesPerRow;
-    UInt32 fbSize = fbHeight * fbPitch;
-
-    fbMemory = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-        kernel_task, kIOMemoryUnshared | kIOMemoryPhysicallyContiguous, fbSize, 0x00000000FFFFF000ULL);
-    if (!fbMemory) return false;
-
-    if (fbMemory->prepare() != kIOReturnSuccess) {
-        fbMemory->release();
-        fbMemory = nullptr;
-        return false;
-    }
-
-    fbMap = fbMemory->map(kIOMapWriteCombineCache);
-    if (!fbMap) {
-        fbMemory->complete();
-        fbMemory->release();
-        fbMemory = nullptr;
-        return false;
-    }
-
-    fbPhys = fbMemory->getPhysicalAddress();
-    fbVirt = (void *)fbMap->getVirtualAddress();
-    bzero(fbVirt, fbSize);
-
-    IOLog("CoreUltraGraphics: framebuffer %ux%u @ %dbpp, phys 0x%llx virt %p\n",
-          fbWidth, fbHeight, fbDepth, (unsigned long long)fbPhys, fbVirt);
-
-    // Program plane 1A for primary display
-    writeReg(0x70188, fbPitch);
-    writeReg(0x70190, ((fbHeight - 1) << 16) | (fbWidth - 1));
-    writeReg(0x7019C, (uint32_t)(fbPhys & 0xFFFFFFFF));
-    uint32_t ctl = readReg(0x70180);
-    writeReg(0x70180, ctl | (1u << 31) | (1u << 10)); // enable + alpha
-
-    return true;
 }
 
 bool CoreUltraGraphicsDriver::start(IOService *provider)
@@ -189,6 +92,8 @@ bool CoreUltraGraphicsDriver::start(IOService *provider)
 
     logPciIdentity();
 
+    // Memory decode only. Bus mastering is not needed for register access,
+    // so it stays off until something actually needs DMA.
     pciDevice->setMemoryEnable(true);
 
     IOMemoryMap *map = pciDevice->mapDeviceMemoryWithIndex(0);
@@ -209,22 +114,6 @@ bool CoreUltraGraphicsDriver::start(IOService *provider)
 
     dumpDisplayState();
 
-    if (!initDisplayEngine()) {
-        IOLog("CoreUltraGraphics: failed to initialize display engine\n");
-        releaseResources();
-        return false;
-    }
-
-    if (!initFramebuffer()) {
-        IOLog("CoreUltraGraphics: failed to initialize framebuffer\n");
-        releaseResources();
-        return false;
-    }
-
-    if (!allocateHardwareScratchBuffer(64 * 1024)) {
-        IOLog("CoreUltraGraphics: warning: failed to allocate scratch buffer\n");
-    }
-
     registerService();
     return true;
 }
@@ -235,81 +124,25 @@ void CoreUltraGraphicsDriver::stop(IOService *provider)
     super::stop(provider);
 }
 
-// IOFramebuffer required methods
-
-IODeviceMemory * CoreUltraGraphicsDriver::getApertureRange(IOPixelAperture aperture)
+void CoreUltraGraphicsDriver::releaseScratchBuffer()
 {
-    return nullptr; // No GPU aperture exposed
+    if (scratchDesc) {
+        scratchDesc->complete();
+        scratchDesc->release();
+        scratchDesc = nullptr;
+    }
+    scratchVirt = nullptr;
+    scratchPhys = 0;
+    scratchSize = 0;
 }
 
-const char * CoreUltraGraphicsDriver::getPixelFormats( void )
+void CoreUltraGraphicsDriver::releaseResources()
 {
-    return "ARGB8888"; // 32-bit ARGB
-}
-
-IOItemCount CoreUltraGraphicsDriver::getDisplayModeCount( void )
-{
-    return 1; // Only one mode supported for now
-}
-
-IOReturn CoreUltraGraphicsDriver::getDisplayModes( IODisplayModeID * allDisplayModes )
-{
-    if (!allDisplayModes) return kIOReturnBadArgument;
-    allDisplayModes[0] = 1; // Single mode ID
-    return kIOReturnSuccess;
-}
-
-IOReturn CoreUltraGraphicsDriver::getInformationForDisplayMode( IODisplayModeID displayMode, IODisplayModeInformation * info )
-{
-    if (!info) return kIOReturnBadArgument;
-    if (displayMode != 1) return kIOReturnBadArgument;
-
-    info->nominalWidth = fbWidth;
-    info->nominalHeight = fbHeight;
-    info->refreshRate = 60000; // 60 Hz in fixed-point 16.16
-    info->maxDepthIndex = 0;
-    info->flags = kIODisplayModeFlagSafeMode;
-    return kIOReturnSuccess;
-}
-
-UInt64 CoreUltraGraphicsDriver::getPixelFormatsForDisplayMode( IODisplayModeID displayMode, IOOptionBits flags )
-{
-    if (displayMode != 1) return 0;
-    return 0x8000000000000000ULL; // IO32BitDirectPixels bit
-}
-
-IOReturn CoreUltraGraphicsDriver::getPixelInformation( IOIndex *bytesPerRow, IOIndex *bytesPerPixel, IOIndex *bitsPerPixel, IOIndex *pixelsPerRow )
-{
-    if (bytesPerRow) *bytesPerRow = fbBytesPerRow;
-    if (bytesPerPixel) *bytesPerPixel = fbDepth / 8;
-    if (bitsPerPixel) *bitsPerPixel = fbDepth;
-    if (pixelsPerRow) *pixelsPerRow = fbWidth;
-    return kIOReturnSuccess;
-}
-
-IOReturn CoreUltraGraphicsDriver::getCurrentDisplayMode( IODisplayModeID * displayMode, IOOptionBits flags )
-{
-    if (!displayMode) return kIOReturnBadArgument;
-    *displayMode = 1;
-    return kIOReturnSuccess;
-}
-
-IOReturn CoreUltraGraphicsDriver::setDisplayMode( IODisplayModeID displayMode, IOOptionBits flags )
-{
-    if (displayMode != 1) return kIOReturnUnsupported;
-    return kIOReturnSuccess;
-}
-
-IOReturn CoreUltraGraphicsDriver::flushDisplay(IOOptionBits options)
-{
-    asm volatile("mfence" ::: "memory");
-    return kIOReturnSuccess;
-}
-
-void CoreUltraGraphicsDriver::stop(IOService *provider)
-{
-    releaseResources();
-    super::stop(provider);
+    releaseScratchBuffer();
+    mmioBase = nullptr;
+    mmioLength = 0;
+    if (mmioMap) { mmioMap->release(); mmioMap = nullptr; }
+    if (pciDevice) { pciDevice->release(); pciDevice = nullptr; }
 }
 
 bool CoreUltraGraphicsDriver::allocateHardwareScratchBuffer(uint32_t size)
