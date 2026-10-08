@@ -1,10 +1,9 @@
-#ifndef XeTranslationPipeline_h
-#define XeTranslationPipeline_h
+#ifndef XE_TRANSLATION_PIPELINE_H
+#define XE_TRANSLATION_PIPELINE_H
 
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
 #include <IOKit/IOMemoryDescriptor.h>
-#include <IOKit/IOMemoryMap.h>
 #include <IOKit/graphics/IOFramebuffer.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <stdint.h>
