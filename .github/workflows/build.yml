@@ -11,15 +11,24 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+
+      # Enforce explicit developer directory routing before executing make loops
+      - name: Select Active Developer Directory SDK Path
+        run: |
+          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+          xcrun --sdk macosx --show-sdk-path
+
       - name: Verify toolchain
         run: |
-          xcrun --sdk macosx --show-sdk-path
           clang++ --version
           which make
+
       - name: Build kext
         run: make
+
       - name: Package artifact
         run: ditto -c -k --sequesterRsrc --keepParent CoreUltraGraphics.kext CoreUltraGraphics-v0.1.0-kext.zip
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
