@@ -4,10 +4,11 @@ OBJS      = build/CoreUltraGraphicsDriver.o build/XeTranslationPipeline.o
 SDK       = $(shell xcrun --sdk macosx --show-sdk-path)
 CXX       = $(shell xcrun -f clang++)
 
-# Core System Header and KPI Framework Vector Inclusions
+# Target clean include environments and standard GNU structures
 INC       = -isysroot $(SDK) -I$(SDK)/System/Library/Frameworks/Kernel.framework/Headers
 
-CXXFLAGS  = -m64 -arch x86_64 -fno-builtin -fno-exceptions -fno-rtti -nostdinc -DKERNEL -DAPPLE -DNeXT -Wall -Wextra -O2 -mkernel
+# Core kernel compilation configurations with explicit dialect tracking
+CXXFLAGS  = -m64 -arch x86_64 -std=gnu++14 -fno-builtin -fno-exceptions -fno-rtti -nostdinc -DKERNEL -DAPPLE -DNeXT -Wall -Wextra -O2 -mkernel
 LDFLAGS   = -static -nostdlib -lkpi_iokit -lkpi_libkern -Xlinker -kext
 
 all: $(KEXT)
