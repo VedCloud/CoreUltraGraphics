@@ -1,0 +1,110 @@
+name: diagnose-kmod
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [diagnose-kmod]
+
+jobs:
+  diagnose:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select developer directory
+        run: |
+          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+          xcrun --sdk macosx --show-sdk-path
+
+      - name: Locate kmod_info sources in the Xcode toolchain and SDK
+        run: |
+          SDK="$(xcrun --sdk macosx --show-sdk-path)"
+          echo "SDK=$SDK"
+          echo "=== find kmod_info* under Xcode ==="
+          sudo find /Applications/Xcode_15.4.app -name 'kmod_info*' 2>/dev/null | head -20 || true
+          echo "=== find CreateKModInfo* under Xcode ==="
+          sudo find /Applications/Xcode_15.4.app -iname 'CreateKModInfo*' 2>/dev/null | head -20 || true
+          echo "=== which archive defines _kmod_info? (SDK usr/lib) ==="
+          for a in "$SDK"/usr/lib/*.a; do
+            if nm --defined-only "$a" 2>/dev/null | grep -q '_kmod_info'; then
+              echo "DEFINES: $a"
+            fi
+          done
+          echo "=== done scanning SDK archives ==="
+
+      - name: Compare archive members with MacKernelSDK
+        run: |
+          SDK="$(xcrun --sdk macosx --show-sdk-path)"
+          echo "=== Xcode SDK libkmod.a members ==="
+          ar t "$SDK/usr/lib/libkmod.a" 2>/dev/null || echo "(missing)"
+          echo "=== Xcode SDK libkmodc++.a members ==="
+          ar t "$SDK/usr/lib/libkmodc++.a" 2>/dev/null || echo "(missing)"
+
+      - name: Build objects with current compile flags
+        run: |
+          SDK="$(xcrun --sdk macosx --show-sdk-path)"
+          mkdir -p build
+          for f in CoreUltraGraphicsDriver XeTranslationPipeline; do
+            clang++ -m64 -arch x86_64 -std=gnu++14 -fno-builtin -fno-exceptions -fno-rtti \
+              -nostdinc -DKERNEL -DAPPLE -DNeXT -Wall -Wextra -O2 -mkernel -fapple-kext \
+              -Wno-deprecated-declarations -isysroot "$SDK" \
+              -isystem "$SDK/System/Library/Frameworks/Kernel.framework/Headers" \
+              -c "$f.cpp" -o "build/$f.o"
+          done
+          echo "objects built"
+
+      - name: Link variant matrix
+        run: |
+          SDK="$(xcrun --sdk macosx --show-sdk-path)"
+          OBJS="build/CoreUltraGraphicsDriver.o build/XeTranslationPipeline.o"
+
+          try() {
+            local label="$1"; shift
+            rm -f build/t.out
+            if clang++ "$@" -o build/t.out >/dev/null 2>"build/t.err"; then
+              if nm --defined-only build/t.out 2>/dev/null | grep -q '_kmod_info'; then
+                echo "RESULT | $label | KMOD_INFO=YES"
+              else
+                echo "RESULT | $label | KMOD_INFO=no"
+              fi
+              grep -q '__DATA,__data' <(otool -l build/t.out 2>/dev/null | tr -s ' \t' '\n') && \
+                echo "         sections: has __DATA,__data" || echo "         sections: NO __DATA,__data"
+            else
+              echo "RESULT | $label | LINK FAILED"
+              head -3 build/t.err | sed 's/^/         /'
+            fi
+          }
+
+          COMMON="-arch x86_64 -isysroot $SDK -mkernel -fapple-kext -static"
+
+          try "A baseline (current Makefile)" \
+              $COMMON -nostdlib -Xlinker -kext -Xlinker -no_deduplicate \
+              $OBJS -lkmodc++ -lkmod -lcc_kext
+
+          try "B no -Xlinker -kext" \
+              $COMMON -nostdlib -Xlinker -no_deduplicate \
+              $OBJS -lkmodc++ -lkmod -lcc_kext
+
+          try "C no -nostdlib" \
+              $COMMON -Xlinker -kext -Xlinker -no_deduplicate \
+              $OBJS -lkmodc++ -lkmod -lcc_kext
+
+          try "D no -no_deduplicate" \
+              $COMMON -nostdlib -Xlinker -kext \
+              $OBJS -lkmodc++ -lkmod -lcc_kext
+
+          try "E -kext moved to end" \
+              $COMMON -nostdlib -Xlinker -no_deduplicate \
+              $OBJS -lkmodc++ -lkmod -lcc_kext -Xlinker -kext
+
+          try "F minimal: -static only, kext flags" \
+              $COMMON -nostdlib \
+              $OBJS -lkmodc++ -lkmod -lcc_kext
+
+          try "G like Lilu: -static, no -fapple-kext at link" \
+              -arch x86_64 -isysroot "$SDK" -mkernel -static \
+              $OBJS -lkmodc++ -lkmod -lcc_kext -Xlinker -kext
+
+          try "H with explicit kmod_info.o if present on system" \
+              $COMMON -nostdlib -Xlinker -kext -Xlinker -no_deduplicate \
+              $OBJS -lkmodc++ $(sudo find /Applications/Xcode_15.4.app -name 'kmod_info.o' 2>/dev/null | head -1) -lkmod -lcc_kext
