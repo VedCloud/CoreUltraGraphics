@@ -30,6 +30,22 @@ $(KEXT): $(TARGET) Info.plist
 	cp $(TARGET) $(KEXT)/Contents/MacOS/CoreUltraGraphics
 	cp Info.plist $(KEXT)/Contents/Info.plist
 	plutil -lint $(KEXT)/Contents/Info.plist
+	@$(MAKE) --no-print-directory check-kmod-info
+
+# OpenCore's prelinked injection requires the _kmod_info symbol. Without it,
+# KextFindKmodAddress() returns Kmod = 0, so InternalPrelinkKext() bails out at
+# Link.c:1629 with EFI_UNSUPPORTED, InternalLinkPrelinkedKext() returns NULL, and
+# PrelinkedInjectKext() reports EFI_INVALID_PARAMETER with no further detail.
+# A missing _kmod_info therefore fails silently at boot -- fail the build instead.
+.PHONY: check-kmod-info
+check-kmod-info:
+	@if nm -g $(TARGET) 2>/dev/null | grep -q '_kmod_info'; then \
+		echo "check-kmod-info: OK (_kmod_info present)"; \
+	else \
+		echo "check-kmod-info: FAIL -- _kmod_info missing from $(TARGET)."; \
+		echo "  OpenCore cannot prelink-inject this kext. Do not deploy it."; \
+		exit 1; \
+	fi
 
 clean:
 	rm -rf build $(KEXT)
