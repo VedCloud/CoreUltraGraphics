@@ -1,11 +1,12 @@
 #ifndef XeTranslationPipeline_h
 #define XeTranslationPipeline_h
 
-#include <IOKit/graphics/IOGraphicsDevice.h>
+#include <IOKit/IOService.h>
+#include <IOKit/IOLib.h>
+#include <IOKit/IOMemoryDescriptor.h>
+#include <IOKit/IOMemoryMap.h>
 #include <IOKit/graphics/IOFramebuffer.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
-#include <IOKit/IOMemoryDescriptor.h>
-#include <IOKit/IOLib.h>
 #include <stdint.h>
 
 struct SpirvTokenStream { uint32_t *words; uint32_t wordCount; };
@@ -52,7 +53,7 @@ private:
     AirToSpirvTranslator *shaderTranslator;
     XeRingSubmission *renderRing;
     XeRingSubmission *computeRing;
-    IOGraphicsAccelerator *graphicsFamilyHook;
+    IOFramebuffer *framebufferHook;
     volatile void *mmioBase;
     IOLock *swapLock;
 

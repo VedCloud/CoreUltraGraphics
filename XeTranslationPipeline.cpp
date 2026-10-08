@@ -13,6 +13,8 @@
 #define SPV_VERSION 0x00010300
 #define SPV_GENERATOR 0x000C0001
 
+#define XE_MEMORY_BARRIER() asm volatile("mfence" ::: "memory")
+
 bool XeRingSubmission::init(uint32_t sizeDwords)
 {
     if (sizeDwords < 512 || (sizeDwords & 63)) return false;
@@ -21,7 +23,7 @@ bool XeRingSubmission::init(uint32_t sizeDwords)
         kernel_task, kIOMemoryUnshared | kIOMemoryPhysicallyContiguous, sizeDwords * sizeof(uint32_t), 0x00000000FFFFFFFFULL);
     if (!ringDesc) return false;
     if (ringDesc->prepare() != kIOReturnSuccess) { ringDesc->release(); ringDesc = nullptr; return false; }
-    ringMap = ringDesc->map(kIOMapWriteCombine);
+    ringMap = ringDesc->map(kIOMapWriteCombineCache);
     if (!ringMap) { ringDesc->complete(); ringDesc->release(); ringDesc = nullptr; return false; }
     ringBuffer = (uint32_t*)ringMap->getVirtualAddress();
     bzero(ringBuffer, sizeDwords * sizeof(uint32_t));
@@ -47,7 +49,7 @@ bool XeRingSubmission::submitBatch(IOBufferMemoryDescriptor *batchBufferDesc, ui
 
     if (tail + needed > ringSizeDwords) {
         for (uint32_t i = tail; i < ringSizeDwords; i++) ringBuffer[i] = MI_NOOP;
-        OSMemoryBarrier(); tail = 0;
+        XE_MEMORY_BARRIER(); tail = 0;
     }
 
     ringBuffer[tail + 0] = MI_BATCH_BUFFER_START;
@@ -56,7 +58,7 @@ bool XeRingSubmission::submitBatch(IOBufferMemoryDescriptor *batchBufferDesc, ui
     ringBuffer[tail + 3] = 0x00000000;
     for (uint32_t i = 0; i < dwords; i++) ringBuffer[tail + 4 + i] = src[i];
 
-    OSMemoryBarrier();
+    XE_MEMORY_BARRIER();
     tailIdx = (tail + needed) % ringSizeDwords;
     IOLockUnlock(lock);
     doorbell();
@@ -67,7 +69,7 @@ void XeRingSubmission::doorbell()
 {
     if (ringTailReg) {
         OSWriteLittleInt32((void*)ringTailReg, 0, tailIdx * sizeof(uint32_t));
-        OSMemoryBarrier();
+        XE_MEMORY_BARRIER();
     }
 }
 
@@ -92,7 +94,7 @@ bool CoreUltraExecutionPipeline::allocateSurfaces(uint32_t width, uint32_t heigh
     for (int i = 0; i < 2; i++) {
         IOBufferMemoryDescriptor *desc = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
             kernel_task, kIOMemoryUnshared | kIOMemoryPhysicallyContiguous, size, 0x00000000FFFFFFFFULL);
-        IOMemoryMap *map = desc->map(kIOMapWriteCombine);
+        IOMemoryMap *map = desc->map(kIOMapWriteCombineCache);
         if (i == 0) { frontDesc = desc; frontMap = map; frontPhys = desc->getPhysicalAddress(); }
         else        { backDesc = desc; backMap = map; backPhys = desc->getPhysicalAddress(); }
     }
@@ -113,7 +115,7 @@ void CoreUltraExecutionPipeline::handleDisplayVsync()
     IOLockLock(swapLock);
     IOPhysicalAddress newFront = activeFront ? backPhys : frontPhys;
     OSWriteLittleInt32((void*)(mmio + PLANE_SURF_A), 0, (uint32_t)(newFront & 0xFFFFFFFF));
-    OSMemoryBarrier(); activeFront = !activeFront; IOLockUnlock(swapLock);
+    XE_MEMORY_BARRIER(); activeFront = !activeFront; IOLockUnlock(swapLock);
 }
 
 bool AirToSpirvTranslator::parseAir(const uint8_t *airBinary, uint32_t length) { return true; }
