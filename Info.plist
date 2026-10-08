@@ -31,7 +31,7 @@
             <key>IOProviderClass</key>
             <string>IOPCIDevice</string>
             <key>IOPCIPrimaryMatch</key>
-            <string>0x7D128086</string>
+            <string>0x7D458086</string>
             <key>IOProbeScore</key>
             <integer>5000</integer>
         </dict>
