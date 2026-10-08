@@ -6,7 +6,6 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/graphics/IOFramebuffer.h>
 #include <IOKit/graphics/IOGraphicsDevice.h>
-#include <IOKit/graphics/IOAccelerator.h>
 
 class CoreUltraGraphicsDriver : public IOFramebuffer
 {
@@ -18,8 +17,7 @@ private:
     volatile void *mmioBase;
     UInt32 mmioLength;
 
-    // Host-memory scratch buffer. NOTE: scratchPhys is a CPU physical address,
-    // not a GPU-visible (GGTT/PPGTT) address.
+    // Host-memory scratch buffer
     IOBufferMemoryDescriptor *scratchDesc;
     void *scratchVirt;
     IOPhysicalAddress scratchPhys;
@@ -67,13 +65,19 @@ public:
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;
 
-    // IOFramebuffer overrides
-    virtual IOReturn setDisplayMode(IOIndex depth, IOIndex width, IOIndex height, IOOptionBits flags = 0) override;
-    virtual IOReturn getDisplayMode(IOIndex *depth, IOIndex *width, IOIndex *height, IOOptionBits *flags = 0) override;
-    virtual IOReturn setDisplayMode(IOItemCount depth, IOItemCount width, IOItemCount height, IOOptionBits flags = 0);
-    virtual IOReturn getPixelInformation(IOIndex *bytesPerRow, IOIndex *bytesPerPixel, IOIndex *bitsPerPixel, IOIndex *pixelsPerRow) override;
+    // IOFramebuffer required methods
+    virtual IODeviceMemory * getApertureRange(IOPixelAperture aperture) override;
+    virtual const char * getPixelFormats( void ) override;
+    virtual IOItemCount getDisplayModeCount( void ) override;
+    virtual IOReturn getDisplayModes( IODisplayModeID * allDisplayModes ) override;
+    virtual IOReturn getInformationForDisplayMode( IODisplayModeID displayMode, IODisplayModeInformation * info ) override;
+    virtual UInt64 getPixelFormatsForDisplayMode( IODisplayModeID displayMode, IOOptionBits flags = 0 ) override;
+    virtual IOReturn getPixelInformation( IOIndex *bytesPerRow, IOIndex *bytesPerPixel, IOIndex *bitsPerPixel, IOIndex *pixelsPerRow ) override;
+    virtual IOReturn getCurrentDisplayMode( IODisplayModeID * displayMode, IOOptionBits flags = 0 ) override;
+    virtual IOReturn setDisplayMode( IODisplayModeID displayMode, IOOptionBits flags = 0 ) override;
+
+    // Optional
     virtual IOReturn flushDisplay(IOOptionBits options = 0) override;
-    virtual void flush();
 
     // Scratch buffer for command submission
     bool allocateHardwareScratchBuffer(uint32_t size);
