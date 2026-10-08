@@ -1,10 +1,15 @@
 KEXT      = CoreUltraGraphics.kext
 TARGET    = build/CoreUltraGraphics
 OBJS      = build/CoreUltraGraphicsDriver.o build/XeTranslationPipeline.o
+KMODINFO  = build/kmod_info.o
 SDK       = /Applications/Xcode_15.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk
 CXX       = $(shell xcrun -f clang++)
+CC        = $(shell xcrun -f clang)
 
 INC       = -isysroot $(SDK) -isystem $(SDK)/System/Library/Frameworks/Kernel.framework/Headers
+
+# kmod_info.c only needs the mach headers, not the Kernel.framework ones.
+MACHINC   = -isysroot $(SDK) -isystem $(SDK)/usr/include
 
 CXXFLAGS  = -m64 -arch x86_64 -std=gnu++14 -fno-builtin -fno-exceptions -fno-rtti \
             -nostdinc -DKERNEL -DAPPLE -DNeXT -Wall -Wextra -O2 \
@@ -18,11 +23,16 @@ build/%.o: %.cpp
 	mkdir -p build
 	$(CXX) $(CXXFLAGS) $(INC) -c $< -o $@
 
-$(TARGET): $(OBJS)
+build/kmod_info.o: kmod_info.c
+	mkdir -p build
+	$(CC) -m64 -arch x86_64 -std=gnu11 -nostdinc -Wall -Wextra $(MACHINC) -c $< -o $@
+
+# kmod_info.o must sit between -lkmodc++ and -lkmod (XNU libkern/kmod/README).
+$(TARGET): $(OBJS) $(KMODINFO)
 	mkdir -p build
 	$(CXX) -arch x86_64 -isysroot $(SDK) -mkernel -fapple-kext -static -nostdlib \
 		-Xlinker -kext -Xlinker -no_deduplicate \
-		$(OBJS) -lkmodc++ -lkmod -lcc_kext \
+		$(OBJS) -lkmodc++ $(KMODINFO) -lkmod -lcc_kext \
 		-o $@
 
 $(KEXT): $(TARGET) Info.plist
