@@ -9,9 +9,7 @@ INC       = -isysroot $(SDK) -I$(SDK)/System/Library/Frameworks/Kernel.framework
 
 # Core kernel compilation configurations with explicit dialect tracking
 CXXFLAGS  = -m64 -arch x86_64 -std=gnu++14 -fno-builtin -fno-exceptions -fno-rtti -nostdinc -DKERNEL -DAPPLE -DNeXT -Wall -Wextra -O2 -mkernel
-LDFLAGS   = -static -nostdlib -Xlinker -kext \
-            -F/Applications/Xcode_15.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk/System/Library/Frameworks \
-            -framework Kernel
+LDFLAGS   = -static -nostdlib -Xlinker -kext -isysroot $(SDK) -framework Kernel
 
 all: $(KEXT)
 
