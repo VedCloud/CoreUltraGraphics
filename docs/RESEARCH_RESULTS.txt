@@ -1,0 +1,21 @@
+2026-10-12
+python -m unittest discover -v
+test_existing_disabled_and_order_preserved ... ok
+test_input_and_acpi_preserved ... ok
+test_malformed_rejected ... ok
+test_no_overwrite ... ok
+test_bad_metadata_explicit_error ... ok
+test_different_gpu_not_marked_matching ... ok
+test_filters_identifies_and_omits_private_data ... ok
+test_missing_root ... ok
+Ran 8 tests in 0.158s
+OK
+
+python -m compileall -q inject_oc.py linux_baseline.py test_inject_oc.py test_linux_baseline.py
+Exit 0; no Python diagnostics.
+
+PowerShell startup still reports InitializeDefaultDrives/FileSystem failure.
+Python and Git operations completed despite this message.
+
+No SDK build, ASL compilation, firmware loading, driver installation or GPU execution.
+Source links that could not be fetched are identified as a queue in IMPLEMENTATION_PLAN.md.

@@ -1,0 +1,202 @@
+[
+  {
+    "signature": "APIC",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "ASF!",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "BGRT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "BOOT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "DBG2",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "DBGP",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "DSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "DTPR",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "FACP",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "FACS",
+    "length_valid": true,
+    "checksum_valid": null
+  },
+  {
+    "signature": "FPDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "HPET",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "LPIT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "MCFG",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "NHLT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "PHAT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "SSDT",
+    "length_valid": true,
+    "checksum_valid": true
+  },
+  {
+    "signature": "WSMT",
+    "length_valid": true,
+    "checksum_valid": true
+  }
+]
