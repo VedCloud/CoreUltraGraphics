@@ -1,0 +1,23 @@
+2026-10-12
+User confirms current Windows host is the Latitude.
+Windows registry enumerates Intel display device 8086:7D45 revision 08.
+Report ZIP raw PCI config confirms vendor/device/revision.
+Report baseline: graphics 12.70, media 13, display 14.00, 64 EUs.
+Report namespace: _SB.PC00.GFX0.
+Report driver log: GuC submission enabled; eDP framebuffer active.
+No known-output rendering test present.
+
+python -m unittest discover -v
+Ran 19 tests in 0.106s
+OK
+
+python -m compileall -q .
+No diagnostics.
+Info.plist parsed successfully.
+Project ACPI checker run against real report: 40 lengths valid, 39 standard
+checksums valid, FACS checksum not applicable. Saved ACPI_INTEGRITY.json.
+
+No Apple SDK/compiler or Windows C++ compiler discovered.
+No kext/ASL compiled. No GitHub workflow dispatched or uploaded.
+YAML parser unavailable locally; workflow not parser-validated.
+No firmware change, security-setting change, kext loading or EFI modification.

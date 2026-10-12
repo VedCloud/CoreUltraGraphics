@@ -1,8 +1,10 @@
 DefinitionBlock ("", "SSDT", 2, "CUSTOM", "CoreUtra", 0x00000001)
 {
-    External (_SB_.PCI0.GFX0, DeviceObj)
+    // Namespace measured in the supplied Linux report. Still not deployable:
+    // inspect the original DSDT for an existing _DSM and EFI rename patches first.
+    External (_SB_.PC00.GFX0, DeviceObj)
 
-    Scope (_SB.PCI0.GFX0)
+    Scope (_SB.PC00.GFX0)
     {
         Method (_DSM, 4, NotSerialized)
         {

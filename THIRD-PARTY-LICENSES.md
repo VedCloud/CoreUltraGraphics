@@ -37,7 +37,11 @@ The link-line requirement documented in `kmod_info.c`
 (`*.o -lkmodc++ kmod_info.o -lkmod`) is taken from XNU's own
 `libkern/kmod/README`, and is reproduced here for reference.
 
-## MacKernelSDK — investigated, not used
+## MacKernelSDK — pinned CI build dependency
+
+The prepared workflow now retrieves revision `3f750085caa17ec3a7880f11c11bf4f48cd6a164` for kernel headers and x86_64 libraries. It is not vendored in this source package. Review its [upstream licence](https://github.com/acidanthera/MacKernelSDK/blob/3f750085caa17ec3a7880f11c11bf4f48cd6a164/LICENSE.txt) and individual files before redistribution. SDK compilation does not establish runtime compatibility.
+
+The following earlier investigation notes are inherited source claims, not independently reproduced in this Windows session:
 
 CI run `37789952837` tested `acidanthera/MacKernelSDK` at pinned revision
 `3f750085caa17ec3a7880f11c11bf4f48cd6a164`. Its `Library/x86_64/libkmod.a`

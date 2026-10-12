@@ -1,23 +1,39 @@
 KEXT      = CoreUltraGraphics.kext
 TARGET    = build/CoreUltraGraphics
-OBJS      = build/CoreUltraGraphicsDriver.o build/XeTranslationPipeline.o
+OBJS      = build/CoreUltraGraphicsDriver.o
 KMODINFO  = build/kmod_info.o
-SDK       = /Applications/Xcode_15.4.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.5.sdk
+SDK       ?= $(shell xcrun --sdk macosx --show-sdk-path 2>/dev/null)
 CXX       = $(shell xcrun -f clang++)
 CC        = $(shell xcrun -f clang)
 
-INC       = -isysroot $(SDK) -isystem $(SDK)/System/Library/Frameworks/Kernel.framework/Headers
+KERNEL_HEADERS = $(SDK)/System/Library/Frameworks/Kernel.framework/Headers
+KERNEL_LIBS =
+ifneq ($(strip $(KERNEL_SDK)),)
+KERNEL_HEADERS = $(KERNEL_SDK)/Headers
+KERNEL_LIBS = -L"$(KERNEL_SDK)/Library/x86_64"
+endif
+INC       = -isysroot "$(SDK)" -isystem "$(KERNEL_HEADERS)"
 
-# kmod_info.c only needs the mach headers, not the Kernel.framework ones.
-MACHINC   = -isysroot $(SDK) -isystem $(SDK)/usr/include
+# Compile metadata with the same kernel-header set as the C++ source.
+MACHINC   = $(INC)
 
 CXXFLAGS  = -m64 -arch x86_64 -std=gnu++14 -fno-builtin -fno-exceptions -fno-rtti \
             -nostdinc -DKERNEL -DAPPLE -DNeXT -Wall -Wextra -O2 \
             -mkernel -fapple-kext -Wno-deprecated-declarations
 
-.PHONY: all clean
+.PHONY: all clean preflight
 
 all: $(KEXT)
+
+preflight:
+	@test "$$(uname -s)" = Darwin || { echo "A macOS/Xcode build host is required."; exit 1; }
+	@test -n "$(SDK)" -a -d "$(SDK)" || { echo "Select an installed macOS SDK with SDK=..."; exit 1; }
+	@test -f "$(KERNEL_HEADERS)/IOKit/IOService.h" || { echo "Selected kernel SDK lacks required headers."; exit 1; }
+	@test -f "$(KERNEL_HEADERS)/IOKit/pci/IOPCIDevice.h" || { echo "Selected kernel SDK lacks IOPCIFamily headers."; exit 1; }
+	@xcrun --find clang++ >/dev/null
+	@xcrun --find clang >/dev/null
+
+$(OBJS) $(KMODINFO): | preflight
 
 build/%.o: %.cpp
 	mkdir -p build
@@ -25,12 +41,12 @@ build/%.o: %.cpp
 
 build/kmod_info.o: kmod_info.c
 	mkdir -p build
-	$(CC) -m64 -arch x86_64 -std=gnu11 -nostdinc -Wall -Wextra $(MACHINC) -c $< -o $@
+	$(CC) -m64 -arch x86_64 -std=gnu11 -nostdinc -DKERNEL -DAPPLE -DNeXT -mkernel -fno-builtin -Wall -Wextra $(MACHINC) -c $< -o $@
 
 # kmod_info.o must sit between -lkmodc++ and -lkmod (XNU libkern/kmod/README).
 $(TARGET): $(OBJS) $(KMODINFO)
 	mkdir -p build
-	$(CXX) -arch x86_64 -isysroot $(SDK) -mkernel -fapple-kext -static -nostdlib \
+	$(CXX) -arch x86_64 -isysroot "$(SDK)" -mkernel -fapple-kext -static -nostdlib $(KERNEL_LIBS) \
 		-Xlinker -kext -Xlinker -no_deduplicate \
 		$(OBJS) -lkmodc++ $(KMODINFO) -lkmod -lcc_kext \
 		-o $@
@@ -49,7 +65,7 @@ $(KEXT): $(TARGET) Info.plist
 # A missing _kmod_info therefore fails silently at boot -- fail the build instead.
 .PHONY: check-kmod-info
 check-kmod-info:
-	@if nm -g $(TARGET) 2>/dev/null | grep -q '_kmod_info'; then \
+	@if nm -gU $(TARGET) | grep -Eq '[[:space:]]_kmod_info$$'; then \
 		echo "check-kmod-info: OK (_kmod_info present)"; \
 	else \
 		echo "check-kmod-info: FAIL -- _kmod_info missing from $(TARGET)."; \

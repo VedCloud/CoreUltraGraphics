@@ -1,36 +1,71 @@
-name: build-kext
+name: Diagnostic probe build
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-
-      # Enforce explicit developer directory routing before executing make loops
-      - name: Select Active Developer Directory SDK Path
+        with:
+          persist-credentials: false
+      - name: Fetch pinned kernel headers and libraries
+        uses: actions/checkout@v4
+        with:
+          repository: acidanthera/MacKernelSDK
+          ref: 3f750085caa17ec3a7880f11c11bf4f48cd6a164
+          path: .deps/MacKernelSDK
+          persist-credentials: false
+      - name: Record environment and source revisions
+        shell: bash
         run: |
-          sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
-          xcrun --sdk macosx --show-sdk-path
-
-      - name: Verify toolchain
+          set -euo pipefail
+          mkdir -p ci-results
+          {
+            sw_vers
+            xcodebuild -version
+            xcrun --sdk macosx --show-sdk-path
+            xcrun clang++ --version
+            git rev-parse HEAD
+            git -C .deps/MacKernelSDK rev-parse HEAD
+          } 2>&1 | tee ci-results/environment.txt
+      - name: Run offline tests
+        shell: bash
         run: |
-          clang++ --version
-          which make
-
-      - name: Build kext
-        run: make
-
-      - name: Package artifact
-        run: ditto -c -k --sequesterRsrc --keepParent CoreUltraGraphics.kext CoreUltraGraphics-v0.1.0-kext.zip
-
-      - name: Upload artifact
+          set -euo pipefail
+          python3 -m unittest discover -v 2>&1 | tee ci-results/tests.txt
+          python3 -m compileall -q *.py
+      - name: Compile identification-only kext
+        shell: bash
+        run: |
+          set -euo pipefail
+          make KERNEL_SDK="$PWD/.deps/MacKernelSDK" 2>&1 | tee ci-results/build.txt
+      - name: Inspect artifact without loading
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            python3 verify_kext.py CoreUltraGraphics.kext
+            nm -gU build/CoreUltraGraphics
+            nm -u build/CoreUltraGraphics
+            otool -hv build/CoreUltraGraphics
+          } 2>&1 | tee ci-results/artifact-inspection.txt
+          ditto -c -k --keepParent CoreUltraGraphics.kext ci-results/CoreUltraGraphics-diagnostic.zip
+      - name: Save complete logs and successful artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: CoreUltraGraphics-v0.1.0-kext
-          path: CoreUltraGraphics-v0.1.0-kext.zip
+          name: diagnostic-build-results
+          path: ci-results/
+          if-no-files-found: error
+
+# No installation, kext loading, hardware register access or EFI deployment.
