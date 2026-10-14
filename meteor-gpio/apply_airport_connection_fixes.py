@@ -97,8 +97,22 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==28, "TX versions8/10 shared ABI");
         };
         int result=0;
         if(action==IWX_FW_CTXT_ACTION_ADD) {
+            // Linux creates an inactive infrastructure link before assigning
+            // PHY/rates/QoS. ADD does not carry MODIFY-only configuration.
+            struct latitude_link_v1 configured=link;
+            memset(&link,0,sizeof(link));
+            link.link_id=configured.link_id;
+            link.mac_id=configured.mac_id;
+            link.phy_id=htole32(IWX_FW_CTXT_INVALID);
+            IEEE80211_ADDR_COPY(link.addr,sc->sc_ic.ic_myaddr);
             result=send_link(IWX_FW_CTXT_ACTION_ADD);
+            IOService *parent=getController()?getController()->getProvider():nullptr;
+            if(parent) {
+                parent->setProperty("LatitudeWiFiLinkAddResult",(UInt32)result,32);
+                parent->setProperty("LatitudeWiFiLinkAddLayout","linux-inactive-minimal");
+            }
             if(result) return result;
+            link=configured;
         }
         uint32_t modifications=0x0f; // active, rates, protection, QoS
         if(action==IWX_FW_CTXT_ACTION_ADD) in->latitude_beacon_timing_set=false;
