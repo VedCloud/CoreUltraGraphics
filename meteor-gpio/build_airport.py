@@ -17,6 +17,20 @@ def patch(wifi):
     if (!attachInterface((IONetworkInterface **)&fNetIf, true)) {
         provider->setProperty("LatitudeAirportStage", "interface-attach-failed");''')
     p.write_text(s)
+    p=wifi/'AirportItlwm/AirportItlwmV2.cpp';s=p.read_text()
+    s=once(s,'    if (!fHalService->attach(pciNub)) {','''    provider->setProperty("LatitudeAirportStage", "hardware-attach");
+    if (!fHalService->attach(pciNub)) {
+        provider->setProperty("LatitudeAirportStage", "hardware-attach-failed");
+        const char *firmware = fHalService->getDriverInfo()->getFirmwareName();
+        if (firmware) provider->setProperty("LatitudeWiFiFirmware", firmware);''')
+    start=s.index('bool AirportItlwm::start(IOService *provider)');end=s.index('\nvoid AirportItlwm::stop',start)
+    b=s[start:end]
+    b=once(b,'    if (!attachInterface(fNetIf, this)) {','''    provider->setProperty("LatitudeAirportStage", "native-interface-attach");
+    if (!attachInterface(fNetIf, this)) {
+        provider->setProperty("LatitudeAirportStage", "native-interface-attach-failed");''')
+    b=once(b,'    return true;','''    provider->setProperty("LatitudeAirportStage", "start-success");
+    return true;''')
+    s=s[:start]+b+s[end:];p.write_text(s)
     p=wifi/'itlwm/hal_iwx/ItlIwx.cpp';s=p.read_text()
     s=once(s,'    fwData = getFWDescByName(sc->sc_fwname);','''    fwData = getFWDescByName(sc->sc_fwname);
     {
@@ -68,6 +82,7 @@ if __name__=='__main__':
     patch(wifi)
     (out/'instrumented-ItlIwx.cpp').write_text((wifi/'itlwm/hal_iwx/ItlIwx.cpp').read_text())
     (out/'instrumented-AirportItlwm.cpp').write_text((wifi/'AirportItlwm/AirportItlwm.cpp').read_text())
+    (out/'instrumented-AirportItlwmV2.cpp').write_text((wifi/'AirportItlwm/AirportItlwmV2.cpp').read_text())
     subprocess.run(['xcodebuild','-project','itlwm.xcodeproj','-scheme','AirportItlwm-Sequoia','-configuration','Debug','-jobs','3','ARCHS=x86_64','ONLY_ACTIVE_ARCH=NO','SYMROOT='+str(r/'airport-build/products'),'OBJROOT='+str(r/'airport-build/obj'),'CODE_SIGNING_ALLOWED=NO','CODE_SIGNING_REQUIRED=NO','build'],cwd=wifi,check=True)
     b=r/'airport-build/products/Debug/Sequoia/AirportItlwm.kext'
     assert b.exists()
