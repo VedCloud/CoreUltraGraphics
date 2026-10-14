@@ -79,12 +79,19 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==28, "TX versions8/10 shared ABI");
         memset(&legacy,0,sizeof(legacy));
         iwx_mac_ctxt_cmd_common(sc,in,&legacy,IWX_FW_CTXT_ACTION_MODIFY);
         link.cck_rates=legacy.cck_rates; link.ofdm_rates=legacy.ofdm_rates;
-        link.preamble=legacy.cck_short_preamble; link.slot=legacy.short_slot;
-        link.protection=legacy.protection_flags; link.qos=legacy.qos_flags;
+        link.preamble=htole32(le32toh(legacy.cck_short_preamble)!=0);
+        link.slot=htole32(le32toh(legacy.short_slot)!=0);
+        uint32_t old_protection=le32toh(legacy.protection_flags), new_protection=0;
+        if(old_protection & IWX_MAC_PROT_FLG_TGG_PROTECT) new_protection|=1U<<0;
+        if(old_protection & IWX_MAC_PROT_FLG_HT_PROT) new_protection|=1U<<1;
+        if(old_protection & IWX_MAC_PROT_FLG_FAT_PROT) new_protection|=1U<<2;
+        if(old_protection & IWX_MAC_PROT_FLG_SELF_CTS_EN) new_protection|=1U<<3;
+        link.protection=htole32(new_protection); link.qos=legacy.qos_flags;
         memcpy(link.ac,legacy.ac,sizeof(legacy.ac));
         link.bi=htole32(in->in_ni.ni_intval);
         link.dtim=htole32(in->in_ni.ni_intval*in->in_ni.ni_dtimperiod);
         link.flags=htole32(1); link.flags_mask=htole32(1); // no HE color filtering initially
+        const char *link_stage="prepare";
         auto send_link=[&](uint32_t act) -> int {
             link.action=htole32(act);
             int result=iwx_send_cmd_pdu(sc,iwx_cmd_id(0x09,IWX_MAC_CONF_GROUP,0),0,sizeof(link),&link);
@@ -92,6 +99,15 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==28, "TX versions8/10 shared ABI");
             if(parent) {
                 parent->setProperty("LatitudeWiFiLinkResult",(UInt32)result,32);
                 parent->setProperty("LatitudeWiFiLinkAction",act,32);
+                parent->setProperty("LatitudeWiFiLinkStage",link_stage);
+                parent->setProperty("LatitudeWiFiLinkModifyMask",le32toh(link.modify_mask),32);
+                parent->setProperty("LatitudeWiFiLinkPhyID",le32toh(link.phy_id),32);
+                if(result && !parent->getProperty("LatitudeWiFiLinkFirstFailureStage")) {
+                    parent->setProperty("LatitudeWiFiLinkFirstFailureStage",link_stage);
+                    parent->setProperty("LatitudeWiFiLinkFirstFailureResult",(UInt32)result,32);
+                    parent->setProperty("LatitudeWiFiLinkFirstFailureAction",act,32);
+                    parent->setProperty("LatitudeWiFiLinkFirstFailureMask",le32toh(link.modify_mask),32);
+                }
             }
             return result;
         };
@@ -105,6 +121,7 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==28, "TX versions8/10 shared ABI");
             link.mac_id=configured.mac_id;
             link.phy_id=htole32(IWX_FW_CTXT_INVALID);
             IEEE80211_ADDR_COPY(link.addr,sc->sc_ic.ic_myaddr);
+            link_stage="add-inactive";
             result=send_link(IWX_FW_CTXT_ACTION_ADD);
             IOService *parent=getController()?getController()->getProvider():nullptr;
             if(parent) {
@@ -112,23 +129,51 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==28, "TX versions8/10 shared ABI");
                 parent->setProperty("LatitudeWiFiLinkAddLayout","linux-inactive-minimal");
             }
             if(result) return result;
+            // Attach the PHY and activate independently of rates/QoS/HE.
+            link=configured;
+            memset(&link,0,sizeof(link));
+            link.link_id=configured.link_id; link.mac_id=configured.mac_id;
+            link.phy_id=configured.phy_id;
+            IEEE80211_ADDR_COPY(link.addr,sc->sc_ic.ic_myaddr);
+            link.modify_mask=htole32(1); link.active=htole32(1);
+            link_stage="activate-phy-only";
+            result=send_link(IWX_FW_CTXT_ACTION_MODIFY);
+            if(parent) parent->setProperty("LatitudeWiFiLinkActivateResult",(UInt32)result,32);
+            if(result) {
+                link_stage="rollback-remove";
+                link.modify_mask=0; link.active=0;
+                send_link(IWX_FW_CTXT_ACTION_REMOVE);
+                return result;
+            }
             link=configured;
         }
-        uint32_t modifications=0x0f; // active, rates, protection, QoS
+        uint32_t modifications=0x0e; // rates, protection, QoS; activation is separate
         if(action==IWX_FW_CTXT_ACTION_ADD) in->latitude_beacon_timing_set=false;
         bool timing=(in->in_ni.ni_associd && in->in_ni.ni_dtimperiod &&
             !in->latitude_beacon_timing_set && action!=IWX_FW_CTXT_ACTION_REMOVE);
         if(timing) modifications|=0x10;
         link.modify_mask=htole32(modifications);
         link.active=htole32(action!=IWX_FW_CTXT_ACTION_REMOVE);
+        link_stage="configure-active-link";
+        if(action==IWX_FW_CTXT_ACTION_REMOVE) {
+            uint32_t id=link.link_id, mac=link.mac_id, phy=link.phy_id;
+            memset(&link,0,sizeof(link));
+            link.link_id=id;link.mac_id=mac;link.phy_id=phy;
+            IEEE80211_ADDR_COPY(link.addr,sc->sc_ic.ic_myaddr);
+            link.modify_mask=htole32(1);
+            link_stage="deactivate-phy-only";
+        }
         result=send_link(IWX_FW_CTXT_ACTION_MODIFY);
         if(result && action==IWX_FW_CTXT_ACTION_ADD) {
-            link.active=0; send_link(IWX_FW_CTXT_ACTION_REMOVE);
+            link_stage="rollback-remove";
+            link.active=0; link.modify_mask=0; send_link(IWX_FW_CTXT_ACTION_REMOVE);
         }
         if(result) return result;
         if(timing) in->latitude_beacon_timing_set=true;
         if(action==IWX_FW_CTXT_ACTION_REMOVE) {
             in->latitude_beacon_timing_set=false;
+            link_stage="remove-inactive";
+            link.modify_mask=0;
             return send_link(action);
         }
         return 0;
