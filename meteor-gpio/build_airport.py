@@ -3,6 +3,7 @@ import subprocess,shutil,re
 from apply_airport_firmware import apply_wifi
 from apply_pnvm_fixes import apply as apply_pnvm
 from apply_report_fixes import once
+from apply_airport_scan_fixes import apply as apply_scan
 
 def patch(wifi):
     apply_wifi(wifi)
@@ -17,6 +18,7 @@ def patch(wifi):
     if (!attachInterface((IONetworkInterface **)&fNetIf, true)) {
         provider->setProperty("LatitudeAirportStage", "interface-attach-failed");''')
     p.write_text(s)
+
     p=wifi/'AirportItlwm/AirportItlwmV2.cpp';s=p.read_text()
     s=once(s,'    if (!fHalService->attach(pciNub)) {','''    provider->setProperty("LatitudeAirportStage", "hardware-attach");
     if (!fHalService->attach(pciNub)) {
@@ -80,6 +82,7 @@ def patch(wifi):
 if __name__=='__main__':
     r=Path.cwd();wifi=r/'.deps/airport';out=r/'ci-airport';out.mkdir(exist_ok=True)
     patch(wifi)
+    apply_scan(wifi)
     (out/'instrumented-ItlIwx.cpp').write_text((wifi/'itlwm/hal_iwx/ItlIwx.cpp').read_text())
     (out/'instrumented-AirportItlwm.cpp').write_text((wifi/'AirportItlwm/AirportItlwm.cpp').read_text())
     (out/'instrumented-AirportItlwmV2.cpp').write_text((wifi/'AirportItlwm/AirportItlwmV2.cpp').read_text())
