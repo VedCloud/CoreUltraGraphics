@@ -2,7 +2,7 @@ from apply_report_fixes import once
 
 
 def body(s, fn):
-    a=s.index(fn+'(');a=s.index('{',a);e=a+1;d=1
+    a=s.index('\n'+fn+'(');a=s.index('{',a);e=a+1;d=1
     while d:
         if s[e]=='{':d+=1
         elif s[e]=='}':d-=1
@@ -14,7 +14,8 @@ def apply(wifi):
     p=wifi/'itlwm/hal_iwx/ItlIwx.cpp';s=p.read_text()
     # Linux v6.5 fw/api/mac-cfg.h and datapath.h, packed wire layouts.
     anchor='int ItlIwx::\niwx_enable_txq('
-    types='''static bool latitude_mld(struct iwx_softc *sc) {
+    types='''static void iwx_build_he_sta(const struct ieee80211_node *, struct iwx_he_sta_context_cmd *);
+static bool latitude_mld(struct iwx_softc *sc) {
     return sc->sc_pcitag->configRead16(kIOPCIConfigDeviceID) == 0x7e40 &&
         strcmp(sc->sc_fwname, "iwlwifi-ma-b0-gf-a0-83.ucode") == 0 &&
         isset(sc->sc_enabled_capa, 110);
@@ -59,7 +60,7 @@ static_assert(sizeof(latitude_link_v1)==208, "MLD link v1 ABI");
 static_assert(sizeof(latitude_sta_v1)==96, "MLD station v1 ABI");
 static_assert(sizeof(latitude_queue_v3)==36, "MLD queue v3 ABI");
 static_assert(sizeof(latitude_key_v1)==80, "MLD security key v1 ABI");
-static_assert(sizeof(struct iwx_tx_cmd_gen3)==32, "TX versions8/10 shared ABI");
+static_assert(sizeof(struct iwx_tx_cmd_gen3)==28, "TX versions8/10 shared ABI");
 
 '''
     s=once(s,anchor,types+anchor)
@@ -99,14 +100,23 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==32, "TX versions8/10 shared ABI");
             result=send_link(IWX_FW_CTXT_ACTION_ADD);
             if(result) return result;
         }
-        link.modify_mask=htole32(0x1f); // active, rates, protection, QoS, beacon timing
+        uint32_t modifications=0x0f; // active, rates, protection, QoS
+        if(action==IWX_FW_CTXT_ACTION_ADD) in->latitude_beacon_timing_set=false;
+        bool timing=(in->in_ni.ni_associd && in->in_ni.ni_dtimperiod &&
+            !in->latitude_beacon_timing_set && action!=IWX_FW_CTXT_ACTION_REMOVE);
+        if(timing) modifications|=0x10;
+        link.modify_mask=htole32(modifications);
         link.active=htole32(action!=IWX_FW_CTXT_ACTION_REMOVE);
         result=send_link(IWX_FW_CTXT_ACTION_MODIFY);
         if(result && action==IWX_FW_CTXT_ACTION_ADD) {
             link.active=0; send_link(IWX_FW_CTXT_ACTION_REMOVE);
         }
         if(result) return result;
-        if(action==IWX_FW_CTXT_ACTION_REMOVE) return send_link(action);
+        if(timing) in->latitude_beacon_timing_set=true;
+        if(action==IWX_FW_CTXT_ACTION_REMOVE) {
+            in->latitude_beacon_timing_set=false;
+            return send_link(action);
+        }
         return 0;
     }
     struct iwx_binding_cmd cmd;''')
@@ -121,6 +131,8 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==32, "TX versions8/10 shared ABI");
         sta.assoc_id=htole32(in->in_ni.ni_associd & 0x3fff);
         sta.mimo=htole32(in->in_ni.ni_rx_nss>1);
         sta.sp_length=htole32(128);
+        sta.spacing=htole32((ic->ic_ampdu_params & IEEE80211_AMPDU_PARAM_SS)>>2);
+        sta.max_size=htole32(ic->ic_ampdu_params & IEEE80211_AMPDU_PARAM_LE);
         memset(sta.pkt_ext,7,sizeof(sta.pkt_ext)); // PPE NONE
         int result=iwx_send_cmd_pdu(sc,iwx_cmd_id(0x0a,IWX_MAC_CONF_GROUP,0),0,sizeof(sta),&sta);
         IOService *parent=getController()?getController()->getProvider():nullptr;
@@ -244,8 +256,8 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==32, "TX versions8/10 shared ABI");
             link.color=he.bss_color; link.rts=he.frame_time_rts_th;
         }
         link.bi=htole32(in->in_ni.ni_intval);''')
-    s=once(s,'        link.modify_mask=htole32(0x1f);',
-        '        link.modify_mask=htole32((in->in_ni.ni_flags & IEEE80211_NODE_HE)?0x7f:0x1f);')
+    s=once(s,'        link.modify_mask=htole32(modifications);',
+        '        if(in->in_ni.ni_flags & IEEE80211_NODE_HE) modifications|=0x60;\n        link.modify_mask=htole32(modifications);')
     s=once(s,'    uint8_t ver = iwx_lookup_cmd_ver(sc, IWX_DATA_PATH_GROUP, IWX_STA_HE_CTXT_CMD);', '''    if(latitude_mld(sc)) {
         struct iwx_node *in=(struct iwx_node *)ni;
         int result=iwx_add_sta_cmd(sc,in,1);
@@ -253,4 +265,10 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==32, "TX versions8/10 shared ABI");
         return result;
     }
     uint8_t ver = iwx_lookup_cmd_ver(sc, IWX_DATA_PATH_GROUP, IWX_STA_HE_CTXT_CMD);''')
+    p.write_text(s)
+    p=wifi/'itlwm/hal_iwx/if_iwxvar.h';s=p.read_text()
+    s=once(s,'struct iwx_node {', 'struct iwx_node {\n    bool latitude_beacon_timing_set;')
+    # ieee80211_node must remain at offset zero for net80211 casts.
+    s=s.replace('struct iwx_node {\n    bool latitude_beacon_timing_set;\n\tstruct ieee80211_node in_ni;',
+        'struct iwx_node {\n\tstruct ieee80211_node in_ni;\n    bool latitude_beacon_timing_set;')
     p.write_text(s)
