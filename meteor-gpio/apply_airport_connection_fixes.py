@@ -47,6 +47,71 @@ int main() {
     subprocess.run(['clang++','-std=c++11','-Wall','-Wextra','-Werror',str(test),'-o',str(exe)],check=True)
     subprocess.run([str(exe.resolve())],check=True)
     validate_link_encoding(s,out)
+    validate_key_submission(s,out)
+
+
+def validate_key_submission(s,out):
+    key=s[s.index('struct latitude_key_v1 {'):s.index('static_assert(sizeof(latitude_link_v1)')]
+    callbacks=[]
+    for fn,ret in [('iwx_set_key','int'),('iwx_delete_key','void')]:
+        a,e=body(s,fn);b=s[a:e]
+        modern=b[b.index('    if(latitude_mld(sc) &&'):b.index('    if (k->k_cipher !=')]
+        callbacks.append(ret+' '+fn+'(iwx_softc *sc,ieee80211_key *k) { Transport *that=&transport;\n'+modern+('return -1;' if ret=='int' else '')+'\n}\n')
+    test=out/'key-callback-regression.cpp'
+    test.write_text('''#include <cstdint>
+#include <cstring>
+#include <cassert>
+#include <cstdio>
+#define __packed __attribute__((packed))
+#define htole32(x) uint32_t(x)
+#define le32toh(x) uint32_t(x)
+#define htole64(x) uint64_t(x)
+#define MIN(a,b) ((a)<(b)?(a):(b))
+using UInt32=uint32_t;
+enum { IWX_CMD_ASYNC=1, IWX_DATA_PATH_GROUP=5, IWX_STATION_ID=0,
+    IWX_FW_CTXT_ACTION_ADD=1, IWX_FW_CTXT_ACTION_REMOVE=3,
+    IEEE80211_CIPHER_CCMP=8, IEEE80211_KEY_GROUP=1 };
+struct iwx_softc {};
+struct ieee80211_key { int k_cipher,k_flags,k_id; unsigned k_len; uint8_t k_key[32]; uint64_t k_tsc,k_rsc[16]; };
+struct IOService { IOService *getProvider(){return this;} template<class... T> void setProperty(T... ){} };
+bool latitude_mld(iwx_softc *) { return true; }
+uint32_t iwx_cmd_id(unsigned op,unsigned group,unsigned ver) { return op|(group<<8)|(ver<<16); }
+'''+key+'''
+struct Transport {
+    int injected_error=0,calls=0; latitude_key_v1 captured={};
+    IOService *getController(){return nullptr;}
+    int iwx_send_cmd_pdu(iwx_softc *,uint32_t id,uint32_t flags,unsigned len,const void *data) {
+        assert(id==0x518 && len==80); ++calls;
+        // Model the RX callback restriction: waiting on this event source
+        // cannot process its own completion. A synchronous regression fails.
+        assert(flags==IWX_CMD_ASYNC);
+        memcpy(&captured,data,len); return injected_error;
+    }
+} transport;
+'''+''.join(callbacks)+'''
+int main() {
+    iwx_softc sc; ieee80211_key k={};
+    k.k_cipher=IEEE80211_CIPHER_CCMP; k.k_len=16; k.k_tsc=7; k.k_rsc[0]=9;
+    memset(k.k_key,0xa5,16);
+    assert(iwx_set_key(&sc,&k)==0);
+    assert(transport.captured.action==1 && transport.captured.sta_mask==1);
+    assert(transport.captured.flags==2 && transport.captured.key_id==0);
+    assert(transport.captured.tx_seq==7 && transport.captured.rx_seq==9);
+    assert(transport.captured.key[0]==0xa5 && transport.captured.key[16]==0);
+    k.k_flags=IEEE80211_KEY_GROUP; k.k_id=2;
+    assert(iwx_set_key(&sc,&k)==0);
+    assert(transport.captured.flags==0x42 && transport.captured.key_id==2);
+    transport.injected_error=28; assert(iwx_set_key(&sc,&k)==28);
+    iwx_delete_key(&sc,&k);
+    assert(transport.captured.action==3 && transport.captured.sta_mask==1);
+    assert(transport.captured.flags==0x42 && transport.captured.key[0]==0);
+    assert(transport.calls==4);
+    std::puts("RX key callback fixtures passed: async pairwise/group/remove,80-byte ABI,enqueue error preserved");
+}
+''')
+    exe=out/'key-callback-regression'
+    subprocess.run(['clang++','-std=c++11','-Wall','-Wextra','-Werror',str(test),'-o',str(exe)],check=True)
+    subprocess.run([str(exe.resolve())],check=True)
 
 
 def validate_link_encoding(s,out):
@@ -419,15 +484,35 @@ static latitude_link_v1 latitude_link_modify(const latitude_link_v1 &configured,
         modern.key_id=htole32(k->k_id);
         modern.flags=htole32(2 | ((k->k_flags & IEEE80211_KEY_GROUP)?0x40:0));
         %s
-        int result=that->iwx_send_cmd_pdu(sc,iwx_cmd_id(0x18,IWX_DATA_PATH_GROUP,0),0,sizeof(modern),&modern);
+        // Key callbacks run from RX input. Preserve the fork's ASYNC policy:
+        // waiting here prevents this receive handler from processing the ACK.
+        int result=that->iwx_send_cmd_pdu(sc,iwx_cmd_id(0x18,IWX_DATA_PATH_GROUP,0),IWX_CMD_ASYNC,sizeof(modern),&modern);
         IOService *parent=that->getController()?that->getController()->getProvider():nullptr;
-        if(parent) parent->setProperty("LatitudeWiFiKeyResult",(UInt32)result,32);
+        if(parent) {
+            parent->setProperty("LatitudeWiFiKeyResult",(UInt32)result,32);
+            parent->setProperty("LatitudeWiFiKeyCommandMode","async-rx-safe-test15");
+            parent->setProperty("LatitudeWiFiKeyLastAction",le32toh(modern.action),32);
+            parent->setProperty((k->k_flags & IEEE80211_KEY_GROUP)?
+                "LatitudeWiFiGroupKeySubmitResult":"LatitudeWiFiPairwiseKeySubmitResult",(UInt32)result,32);
+        }
         %s
     }
 '''%('IWX_FW_CTXT_ACTION_REMOVE' if remove else 'IWX_FW_CTXT_ACTION_ADD',
      '' if remove else 'memcpy(modern.key,k->k_key,MIN(sizeof(modern.key),k->k_len)); modern.tx_seq=htole64(k->k_tsc); modern.rx_seq=htole64(k->k_rsc[0]);',
      'return;' if remove else 'return result;')
         b=once(b,anchor,code+anchor);s=s[:a]+b+s[e:]
+    # Count only ACKs accepted by existing command-queue/index/PENDING checks.
+    a,e=body(s,'iwx_cmd_done');b=s[a:e]
+    b=once(b,'    data->flags &= ~IWX_TXDATA_FLAG_CMD_PENDING;', '''    data->flags &= ~IWX_TXDATA_FLAG_CMD_PENDING;
+    if(latitude_mld(sc) && code==IWX_WIDE_ID(IWX_DATA_PATH_GROUP,0x18)) {
+        IOService *parent=getController()?getController()->getProvider():nullptr;
+        if(parent) {
+            OSNumber *count=OSDynamicCast(OSNumber,parent->getProperty("LatitudeWiFiKeyAckCount"));
+            parent->setProperty("LatitudeWiFiKeyAckCount",count?count->unsigned32BitValue()+1:1,32);
+            parent->setProperty("LatitudeWiFiKeyAckIndex",(UInt32)idx,32);
+        }
+    }''')
+    s=s[:a]+b+s[e:]
     # Link receives associated beacon/rate/QoS updates when MAC changes.
     s=once(s,'        return result;\n    }\n\n    memset(&cmd, 0, sizeof(cmd));', '''        if(!result && action==IWX_FW_CTXT_ACTION_MODIFY && (sc->sc_flags & IWX_FLAG_BINDING_ACTIVE))
             result=iwx_binding_cmd(sc,in,IWX_FW_CTXT_ACTION_MODIFY);
