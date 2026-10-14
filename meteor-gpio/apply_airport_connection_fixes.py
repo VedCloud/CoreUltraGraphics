@@ -1,4 +1,5 @@
 from apply_report_fixes import once
+import subprocess
 
 
 def body(s, fn):
@@ -10,11 +11,76 @@ def body(s, fn):
     return a,e
 
 
+def validate_rate_encoding(wifi,out):
+    s=(wifi/'itlwm/hal_iwx/ItlIwx.cpp').read_text()
+    start=s.index('static void latitude_encode_basic_rates(')
+    end=s.index('static void iwx_build_he_sta',start)
+    helper=s[start:end]
+    test=out/'basic-rate-regression.cpp'
+    test.write_text('#include <cstdint>\n#include <cassert>\n#include <cstdio>\n'+helper+r'''
+static void check(const uint8_t *rates,unsigned count,uint32_t cck,uint32_t ofdm) {
+    uint32_t actual_cck=0,actual_ofdm=0;
+    latitude_encode_basic_rates(rates,count,&actual_cck,&actual_ofdm);
+    assert(actual_cck==cck && actual_ofdm==ofdm);
+    assert((actual_cck & ~0x0fU)==0 && (actual_ofdm & ~0xffU)==0);
+}
+int main() {
+    // Independent firmware wire-index fixtures from Linux rs.h/mac-ctxt.c.
+    // Standard basic6/12/24 Mbps must be0x15, not driver's gapped0x25.
+    const uint8_t standard5[]={0x8c,18,0x98,36,0xb0,72,96,108};
+    check(standard5,sizeof(standard5),0x0f,0x15);
+    const uint8_t allOFDM[]={0x8c,0x92,0x98,0xa4,0xb0,0xc8,0xe0,0xec};
+    check(allOFDM,sizeof(allOFDM),0x0f,0xff);
+    const uint8_t highOnly[]={0xec};
+    check(highOnly,sizeof(highOnly),0x0f,0x95);
+    const uint8_t cckOnly[]={0x8b,0x96};
+    check(cckOnly,sizeof(cckOnly),0x0f,0x15);
+    const uint8_t oneMbps[]={0x82};
+    check(oneMbps,sizeof(oneMbps),0x01,0x15);
+    const uint8_t duplicates[]={0x8c,0x8c,0x98,0xb0,0xfe};
+    check(duplicates,sizeof(duplicates),0x0f,0x15);
+    check(nullptr,0,0x0f,0x15);
+    std::puts("Firmware basic-rate regression fixtures passed:6/12/24=0x15; allOFDM=0xff;54-only=0x95");
+}
+''')
+    exe=out/'basic-rate-regression'
+    subprocess.run(['clang++','-std=c++11','-Wall','-Wextra','-Werror',str(test),'-o',str(exe)],check=True)
+    subprocess.run([str(exe.resolve())],check=True)
+
+
 def apply(wifi):
     p=wifi/'itlwm/hal_iwx/ItlIwx.cpp';s=p.read_text()
     # Linux v6.5 fw/api/mac-cfg.h and datapath.h, packed wire layouts.
     anchor='int ItlIwx::\niwx_enable_txq('
-    types='''static void iwx_build_he_sta(const struct ieee80211_node *, struct iwx_he_sta_context_cmd *);
+    types='''static void latitude_encode_basic_rates(const uint8_t *rates, unsigned count,
+    uint32_t *cck_rates, uint32_t *ofdm_rates) {
+    // Firmware indexes are contiguous physical legacy rates. The driver's
+    // internal iwx_rates indexes also contain MCS entries and cannot be used.
+    const uint8_t cck_values[4]={2,4,11,22};
+    const uint8_t ofdm_values[8]={12,18,24,36,48,72,96,108};
+    uint32_t cck=0,ofdm=0;
+    unsigned lowest_cck=4,lowest_ofdm=8;
+    for(unsigned i=0;i<count;i++) {
+        if(!(rates[i]&0x80)) continue;
+        uint8_t value=rates[i]&0x7f;
+        for(unsigned bit=0;bit<4;bit++) if(value==cck_values[bit]) {
+            cck|=1U<<bit;
+            if(bit<lowest_cck) lowest_cck=bit;
+        }
+        for(unsigned bit=0;bit<8;bit++) if(value==ofdm_values[bit]) {
+            ofdm|=1U<<bit;
+            if(bit<lowest_ofdm) lowest_ofdm=bit;
+        }
+    }
+    // Intel/Linux mandatory control-response rates: OFDM6/12/24 and lower CCK.
+    if(lowest_ofdm>4) ofdm|=1U<<4;
+    if(lowest_ofdm>2) ofdm|=1U<<2;
+    ofdm|=1;
+    for(unsigned bit=1;bit<4;bit++) if(bit<lowest_cck) cck|=1U<<bit;
+    cck|=1;
+    *cck_rates=cck; *ofdm_rates=ofdm;
+}
+static void iwx_build_he_sta(const struct ieee80211_node *, struct iwx_he_sta_context_cmd *);
 static bool latitude_mld(struct iwx_softc *sc) {
     return sc->sc_pcitag->configRead16(kIOPCIConfigDeviceID) == 0x7e40 &&
         strcmp(sc->sc_fwname, "iwlwifi-ma-b0-gf-a0-83.ucode") == 0 &&
@@ -78,7 +144,10 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==28, "TX versions8/10 shared ABI");
         struct iwx_mac_ctx_cmd legacy;
         memset(&legacy,0,sizeof(legacy));
         iwx_mac_ctxt_cmd_common(sc,in,&legacy,IWX_FW_CTXT_ACTION_MODIFY);
-        link.cck_rates=legacy.cck_rates; link.ofdm_rates=legacy.ofdm_rates;
+        uint32_t cck_basic,ofdm_basic;
+        latitude_encode_basic_rates(in->in_ni.ni_rates.rs_rates,
+            in->in_ni.ni_rates.rs_nrates,&cck_basic,&ofdm_basic);
+        link.cck_rates=htole32(cck_basic); link.ofdm_rates=htole32(ofdm_basic);
         link.preamble=htole32(le32toh(legacy.cck_short_preamble)!=0);
         link.slot=htole32(le32toh(legacy.short_slot)!=0);
         uint32_t old_protection=le32toh(legacy.protection_flags), new_protection=0;
@@ -102,6 +171,7 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==28, "TX versions8/10 shared ABI");
                 parent->setProperty("LatitudeWiFiLinkStage",link_stage);
                 parent->setProperty("LatitudeWiFiLinkModifyMask",le32toh(link.modify_mask),32);
                 parent->setProperty("LatitudeWiFiLinkPhyID",le32toh(link.phy_id),32);
+                parent->setProperty("LatitudeWiFiBasicRateEncoding","contiguous-physical-rates");
                 if(result && !parent->getProperty("LatitudeWiFiLinkFirstFailureStage")) {
                     parent->setProperty("LatitudeWiFiLinkFirstFailureStage",link_stage);
                     parent->setProperty("LatitudeWiFiLinkFirstFailureResult",(UInt32)result,32);
