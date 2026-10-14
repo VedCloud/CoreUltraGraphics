@@ -135,8 +135,21 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==28, "TX versions8/10 shared ABI");
             link.link_id=configured.link_id; link.mac_id=configured.mac_id;
             link.phy_id=configured.phy_id;
             IEEE80211_ADDR_COPY(link.addr,sc->sc_ic.ic_myaddr);
-            link.modify_mask=htole32(1); link.active=htole32(1);
-            link_stage="activate-phy-only";
+            // Linux mld-mac80211: assign PHY in inactive MODIFY first.
+            link.modify_mask=0; link.active=0;
+            link_stage="assign-phy-inactive";
+            result=send_link(IWX_FW_CTXT_ACTION_MODIFY);
+            if(parent) parent->setProperty("LatitudeWiFiLinkAssignPhyResult",(UInt32)result,32);
+            if(result) {
+                link_stage="rollback-remove";
+                send_link(IWX_FW_CTXT_ACTION_REMOVE);
+                return result;
+            }
+            // Then ACTIVE | RATES_INFO, with the mandatory basic rates.
+            link.cck_rates=configured.cck_rates; link.ofdm_rates=configured.ofdm_rates;
+            link.preamble=configured.preamble; link.slot=configured.slot;
+            link.modify_mask=htole32(3); link.active=htole32(1);
+            link_stage="activate-with-basic-rates";
             result=send_link(IWX_FW_CTXT_ACTION_MODIFY);
             if(parent) parent->setProperty("LatitudeWiFiLinkActivateResult",(UInt32)result,32);
             if(result) {
