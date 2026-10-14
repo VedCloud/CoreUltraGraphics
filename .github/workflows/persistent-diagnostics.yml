@@ -1,0 +1,54 @@
+name: Persistent WiFi and I2C diagnostics
+on:
+  push:
+    branches: [meteor-lake-gpio-build]
+  pull_request:
+    branches: [main]
+    paths: ['meteor-gpio/**', '.github/workflows/persistent-diagnostics.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: VoodooI2C/VoodooI2C
+          ref: e3ac3ed207170c39db88d6a67a76cc9fd3a1895a
+          path: .deps/VoodooI2C
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: OpenIntelWireless/itlwm
+          ref: 4ac4c79bc7e34f8764038fc382630a29eb46213d
+          path: .deps/itlwm
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: acidanthera/MacKernelSDK
+          ref: 3f750085caa17ec3a7880f11c11bf4f48cd6a164
+          path: .deps/MacKernelSDK
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: acidanthera/VoodooInput
+          ref: d897813718c2ef9ad143b6a86240fe52dcb1693e
+          path: .deps/VoodooInput
+          persist-credentials: false
+      - name: Build drivers with persistent diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-diagnostics
+          python3 meteor-gpio/build_diagnostics.py 2>&1 | tee ci-diagnostics/build.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Latitude-persistent-diagnostics
+          path: ci-diagnostics/
+          if-no-files-found: error
