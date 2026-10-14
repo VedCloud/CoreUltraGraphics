@@ -11,7 +11,15 @@ def apply(i2c, wifi):
     s = nub.read_text()
     s = once(s, 'bool VoodooI2CDeviceNub::attach(IOService* provider, IOService* child) {', '''// This fallback is opt-in and limited to the captured Latitude Wacom device.
 static bool latitudeWacomFallbackAllowed(IOACPIPlatformDevice *acpi, IOPCIDevice *pci) {
-    if (!acpi || !pci || pci->getProperty("LatitudeWacomResourceFallback") != kOSBooleanTrue ||
+    if (!acpi || !pci) return false;
+    OSObject *opt_in = pci->getProperty("LatitudeWacomResourceFallback");
+    OSData *opt_data = OSDynamicCast(OSData, opt_in);
+    OSNumber *opt_number = OSDynamicCast(OSNumber, opt_in);
+    bool enabled = opt_in == kOSBooleanTrue ||
+        (opt_data && opt_data->getLength() == 1 &&
+            *static_cast<const UInt8 *>(opt_data->getBytesNoCopy()) == 1) ||
+        (opt_number && opt_number->unsigned64BitValue() == 1);
+    if (!enabled ||
         pci->configRead16(kIOPCIConfigVendorID) != 0x8086 ||
         pci->configRead16(kIOPCIConfigDeviceID) != 0x7e78) return false;
     OSData *name = OSDynamicCast(OSData, acpi->getProperty("name"));
