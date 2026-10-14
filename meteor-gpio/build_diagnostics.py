@@ -4,6 +4,7 @@ import re
 import shutil
 import subprocess
 from apply_report_fixes import apply
+from apply_initialization_fixes import apply as apply_initialization
 
 root=Path.cwd()
 i2c=root/'.deps/VoodooI2C'
@@ -101,6 +102,7 @@ wp.write_text(s)
     }'''))
 (out/'instrumented-itlwm.cpp').write_text(s)
 apply(i2c, wifi)
+apply_initialization(i2c, wifi)
 (out/'instrumented-DeviceNub.cpp').write_text(nub.read_text())
 (out/'instrumented-ItlIwx.cpp').write_text((wifi/'itlwm/hal_iwx/ItlIwx.cpp').read_text())
 
