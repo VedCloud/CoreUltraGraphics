@@ -47,4 +47,17 @@ def apply(wifi):
     if (parent) parent->setProperty("LatitudeWiFiRLCResult", (UInt32)err, 32);
     return err;''')
     s = s[:start] + b + s[end:]
+    s = once(s, '''            case IWX_WIDE_ID(IWX_DATA_PATH_GROUP, IWX_STA_HE_CTXT_CMD):''', '''            case IWX_WIDE_ID(IWX_DATA_PATH_GROUP, 0x08): {
+                // RLC_CONFIG v2 returns an ACK. Without this dispatch case,
+                // handled=0 suppresses iwx_cmd_done and the waiter times out.
+                IOService *parent = getController() ? getController()->getProvider() : nullptr;
+                if (parent) {
+                    parent->setProperty("LatitudeWiFiRLCAckReceived", true);
+                    parent->setProperty("LatitudeWiFiRLCAckQueue", qid, 8);
+                    parent->setProperty("LatitudeWiFiRLCAckIndex", idx, 8);
+                    parent->setProperty("LatitudeWiFiRLCAckPayloadLength", iwx_rx_packet_payload_len(pkt), 32);
+                }
+                break; // Existing queue/index/pending checks complete the ACK below.
+            }
+            case IWX_WIDE_ID(IWX_DATA_PATH_GROUP, IWX_STA_HE_CTXT_CMD):''')
     p.write_text(s)
