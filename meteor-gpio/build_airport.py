@@ -4,6 +4,7 @@ from apply_airport_firmware import apply_wifi
 from apply_pnvm_fixes import apply as apply_pnvm
 from apply_report_fixes import once
 from apply_airport_scan_fixes import apply as apply_scan
+from apply_airport_aux_fixes import apply as apply_aux
 
 def patch(wifi):
     apply_wifi(wifi)
@@ -83,6 +84,7 @@ if __name__=='__main__':
     r=Path.cwd();wifi=r/'.deps/airport';out=r/'ci-airport';out.mkdir(exist_ok=True)
     patch(wifi)
     apply_scan(wifi)
+    apply_aux(wifi)
     (out/'instrumented-ItlIwx.cpp').write_text((wifi/'itlwm/hal_iwx/ItlIwx.cpp').read_text())
     (out/'instrumented-AirportItlwm.cpp').write_text((wifi/'AirportItlwm/AirportItlwm.cpp').read_text())
     (out/'instrumented-AirportItlwmV2.cpp').write_text((wifi/'AirportItlwm/AirportItlwmV2.cpp').read_text())
