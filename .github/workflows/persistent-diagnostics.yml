@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: VoodooI2C/VoodooI2C
-          ref: e3ac3ed207170c39db88d6a67a76cc9fd3a1895a
+          ref: 5c0c99cc451b03790c684ce6552c3f61620ad46b
           path: .deps/VoodooI2C
           submodules: recursive
           persist-credentials: false

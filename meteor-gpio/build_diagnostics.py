@@ -47,6 +47,21 @@ for name,key in [('parseResourcesCRS','LatitudeI2C-CRSBuffer'),('parseResourcesD
     s=s[:start]+body+s[end:]
 nub.write_text(s)
 
+controller=i2c/'VoodooI2C/VoodooI2C/VoodooI2CController/VoodooI2CControllerDriver.cpp'
+s=controller.read_text()
+s=replace_once(s,'    reg = readRegister(DW_IC_COMP_TYPE);','''    provider->setProperty("LatitudeI2CControllerStage", "probe-reading-component");
+    reg = readRegister(DW_IC_COMP_TYPE);
+    provider->setProperty("LatitudeI2CControllerType", reg, 32);''')
+s=replace_once(s,'bool VoodooI2CControllerDriver::start(IOService* provider) {','''bool VoodooI2CControllerDriver::start(IOService* provider) {
+    provider->setProperty("LatitudeI2CControllerStage", "start-entered");''')
+s=replace_once(s,'    if (initialiseBus() != kIOReturnSuccess) {','''    if (initialiseBus() != kIOReturnSuccess) {
+        provider->setProperty("LatitudeI2CControllerStage", "bus-initialization-failed");''')
+s=replace_once(s,'    if (startI2CInterrupt() != kIOReturnSuccess) {','''    if (startI2CInterrupt() != kIOReturnSuccess) {
+        provider->setProperty("LatitudeI2CControllerStage", "controller-interrupt-failed");''')
+s=replace_once(s,'    publishNubs();','''    provider->setProperty("LatitudeI2CControllerStage", "publishing-devices");
+    publishNubs();''')
+controller.write_text(s)
+
 wp=wifi/'itlwm/itlwm.cpp'
 s=wp.read_text()
 for signature,label in [('IOService* itlwm::probe','probe'),('bool itlwm::start','start')]:
@@ -77,6 +92,12 @@ s=replace_once(s,'    if (!fHalService->attach(pciNub)) {','''    if (!fHalServi
         const char *latitude_firmware = fHalService->getDriverInfo()->getFirmwareName();
         if (latitude_firmware) provider->setProperty("LatitudeWiFiFirmware", latitude_firmware);''')
 wp.write_text(s)
+(wifi/'itlwm/hal_iwx/ItlIwx.cpp').write_text(replace_once((wifi/'itlwm/hal_iwx/ItlIwx.cpp').read_text(),'    fwData = getFWDescByName(sc->sc_fwname);','''    fwData = getFWDescByName(sc->sc_fwname);
+    IOService *latitude_parent = getController() ? getController()->getProvider() : nullptr;
+    if (latitude_parent) {
+        latitude_parent->setProperty("LatitudeWiFiFirmwareLookup", sc->sc_fwname);
+        latitude_parent->setProperty("LatitudeWiFiFirmwareFound", fwData != nullptr);
+    }'''))
 (out/'instrumented-itlwm.cpp').write_text(s)
 (out/'instrumented-DeviceNub.cpp').write_text(nub.read_text())
 
