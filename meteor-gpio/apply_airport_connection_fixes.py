@@ -144,6 +144,21 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==28, "TX versions8/10 shared ABI");
     s=s[:a]+b+s[e:]
     a,e=body(s,'iwx_rm_sta_cmd');b=s[a:e]
     b=once(b,'    memset(&rm_sta_cmd, 0, sizeof(rm_sta_cmd));', '''    if(latitude_mld(sc)) {
+        // Flush happens in the caller before removing firmware-owned queues.
+        for(int tid=0;tid<=IEEE80211_NUM_TID;tid++) {
+            bool management=tid==IEEE80211_NUM_TID;
+            int queue=management ? sc->first_data_qid : sc->sc_tid_data[tid].qid;
+            if(queue==0 || queue==IWX_INVALID_QUEUE ||
+               (!management && queue==sc->first_data_qid)) continue;
+            struct latitude_queue_v3 remove;
+            memset(&remove,0,sizeof(remove));
+            remove.operation=htole32(1);
+            remove.sta_mask=htole32(1U<<IWX_STATION_ID);
+            remove.tid=management ? IWX_MGMT_TID : tid;
+            int result=iwx_send_cmd_pdu(sc,iwx_cmd_id(0x17,IWX_DATA_PATH_GROUP,0),0,sizeof(remove),&remove);
+            if(result) return result;
+            if(!management) sc->sc_tid_data[tid].qid=IWX_INVALID_QUEUE;
+        }
         uint32_t sta=htole32(IWX_STATION_ID);
         int result=iwx_send_cmd_pdu(sc,iwx_cmd_id(0x0c,IWX_MAC_CONF_GROUP,0),0,sizeof(sta),&sta);
         if(!result) sc->sc_flags &= ~IWX_FLAG_STA_ACTIVE;
