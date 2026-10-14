@@ -3,6 +3,7 @@ import plistlib
 import re
 import shutil
 import subprocess
+from apply_report_fixes import apply
 
 root=Path.cwd()
 i2c=root/'.deps/VoodooI2C'
@@ -99,7 +100,9 @@ wp.write_text(s)
         latitude_parent->setProperty("LatitudeWiFiFirmwareFound", fwData != nullptr);
     }'''))
 (out/'instrumented-itlwm.cpp').write_text(s)
+apply(i2c, wifi)
 (out/'instrumented-DeviceNub.cpp').write_text(nub.read_text())
+(out/'instrumented-ItlIwx.cpp').write_text((wifi/'itlwm/hal_iwx/ItlIwx.cpp').read_text())
 
 macsdk=subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path'],text=True).strip()
 headers=list((root/'.deps/VoodooInput').rglob('VoodooInputTransducer.h'))
