@@ -46,6 +46,57 @@ int main() {
     exe=out/'basic-rate-regression'
     subprocess.run(['clang++','-std=c++11','-Wall','-Wextra','-Werror',str(test),'-o',str(exe)],check=True)
     subprocess.run([str(exe.resolve())],check=True)
+    validate_link_encoding(s,out)
+
+
+def validate_link_encoding(s,out):
+    # Exercise the actual emitted packed structure and builder against Linux
+    # wire offsets and a nonzero AP beacon/QoS fixture, not a duplicate builder.
+    wire=s[s.index('struct latitude_link_v1 {'):s.index('struct latitude_sta_v1 {')]
+    helper=s[s.index('static latitude_link_v1 latitude_link_modify('):s.index('\nint ItlIwx::\niwx_enable_txq(')]
+    test=out/'link-payload-regression.cpp'
+    test.write_text('''#include <cstdint>
+#include <cstddef>
+#include <cstring>
+#include <cassert>
+#include <cstdio>
+#define __packed __attribute__((packed))
+#define htole32(x) uint32_t(x)
+struct iwx_ac_qos { uint16_t cw_min,cw_max; uint8_t aifsn,fifos_mask; uint16_t edca_txop; } __packed;
+struct iwx_he_backoff_conf { uint16_t cwmin,cwmax; uint8_t aifsn,mu_time; uint16_t reserved; } __packed;
+'''+wire+helper+'''
+int main() {
+    static_assert(sizeof(latitude_link_v1)==208,"Linux link v1 size");
+    static_assert(offsetof(latitude_link_v1,modify_mask)==24,"mask offset");
+    static_assert(offsetof(latitude_link_v1,cck_rates)==36,"CCK offset");
+    static_assert(offsetof(latitude_link_v1,ofdm_rates)==40,"OFDM offset");
+    static_assert(offsetof(latitude_link_v1,ac)==60,"EDCA offset");
+    static_assert(offsetof(latitude_link_v1,bi)==136,"beacon offset");
+    static_assert(offsetof(latitude_link_v1,flags)==148,"flags offset");
+    latitude_link_v1 configured={};
+    configured.addr[0]=0x02; configured.addr[5]=0xa5;
+    configured.cck_rates=0x0f; configured.ofdm_rates=0x15;
+    configured.preamble=1; configured.slot=1; configured.protection=6;
+    configured.qos=3; configured.ac[0].cw_min=15; configured.ac[0].cw_max=1023;
+    configured.ac[0].aifsn=3; configured.ac[0].fifos_mask=8;
+    configured.bi=100; configured.dtim=200;
+    configured.flags=1; configured.flags_mask=1;
+    for(unsigned active=0;active<2;active++) {
+        auto cmd=latitude_link_modify(configured,active);
+        const auto *bytes=reinterpret_cast<const uint8_t *>(&cmd);
+        assert(cmd.active==active && cmd.modify_mask==(active?3U:0U));
+        assert(bytes[36]==15 && bytes[40]==21 && bytes[136]==100 && bytes[140]==200);
+        assert(bytes[60]==15 && bytes[62]==255 && bytes[63]==3 && bytes[64]==3);
+        assert(cmd.protection==6 && cmd.qos==3 && cmd.addr[5]==0xa5);
+        assert(cmd.flags==0 && cmd.flags_mask==0);
+        assert(!(cmd.modify_mask & 0x10)); // one-time associated timing remains untouched
+    }
+    std::puts("Linux link wire fixtures passed: populated inactive/active MODIFY, beacon100, EDCA,208-byte ABI");
+}
+''')
+    exe=out/'link-payload-regression'
+    subprocess.run(['clang++','-std=c++11','-Wall','-Wextra','-Werror',str(test),'-o',str(exe)],check=True)
+    subprocess.run([str(exe.resolve())],check=True)
 
 
 def apply(wifi):
@@ -128,6 +179,18 @@ static_assert(sizeof(latitude_queue_v3)==36, "MLD queue v3 ABI");
 static_assert(sizeof(latitude_key_v1)==80, "MLD security key v1 ABI");
 static_assert(sizeof(struct iwx_tx_cmd_gen3)==28, "TX versions8/10 shared ABI");
 
+static latitude_link_v1 latitude_link_modify(const latitude_link_v1 &configured, bool active) {
+    // Linux v6.5 link.c populates the entire MODIFY payload even when the
+    // modify mask selects only ACTIVE/RATES. Do not discard AP beacon/QoS
+    // context here, and do not set the one-time associated timing bit.
+    latitude_link_v1 link=configured;
+    link.modify_mask=htole32(active ? 3 : 0);
+    link.active=htole32(active);
+    // Linux skips HE/color flags entirely until association establishes HE.
+    link.flags=0; link.flags_mask=0;
+    return link;
+}
+
 '''
     s=once(s,anchor,types+anchor)
     a,e=body(s,'iwx_binding_cmd');b=s[a:e]
@@ -172,6 +235,8 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==28, "TX versions8/10 shared ABI");
                 parent->setProperty("LatitudeWiFiLinkModifyMask",le32toh(link.modify_mask),32);
                 parent->setProperty("LatitudeWiFiLinkPhyID",le32toh(link.phy_id),32);
                 parent->setProperty("LatitudeWiFiBasicRateEncoding","contiguous-physical-rates");
+                parent->setProperty("LatitudeWiFiLinkPayloadLayout","linux-populated-modify-test14");
+                parent->setProperty("LatitudeWiFiLinkBeaconInterval",le32toh(link.bi),32);
                 if(result && !parent->getProperty("LatitudeWiFiLinkFirstFailureStage")) {
                     parent->setProperty("LatitudeWiFiLinkFirstFailureStage",link_stage);
                     parent->setProperty("LatitudeWiFiLinkFirstFailureResult",(UInt32)result,32);
@@ -199,12 +264,8 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==28, "TX versions8/10 shared ABI");
                 parent->setProperty("LatitudeWiFiLinkAddLayout","linux-inactive-minimal");
             }
             if(result) return result;
-            // Attach the PHY and activate independently of rates/QoS/HE.
-            link=configured;
-            memset(&link,0,sizeof(link));
-            link.link_id=configured.link_id; link.mac_id=configured.mac_id;
-            link.phy_id=configured.phy_id;
-            IEEE80211_ADDR_COPY(link.addr,sc->sc_ic.ic_myaddr);
+            // Preserve Linux's complete populated MODIFY payload.
+            link=latitude_link_modify(configured,false);
             // Linux mld-mac80211: assign PHY in inactive MODIFY first.
             link.modify_mask=0; link.active=0;
             link_stage="assign-phy-inactive";
@@ -216,9 +277,7 @@ static_assert(sizeof(struct iwx_tx_cmd_gen3)==28, "TX versions8/10 shared ABI");
                 return result;
             }
             // Then ACTIVE | RATES_INFO, with the mandatory basic rates.
-            link.cck_rates=configured.cck_rates; link.ofdm_rates=configured.ofdm_rates;
-            link.preamble=configured.preamble; link.slot=configured.slot;
-            link.modify_mask=htole32(3); link.active=htole32(1);
+            link=latitude_link_modify(configured,true);
             link_stage="activate-with-basic-rates";
             result=send_link(IWX_FW_CTXT_ACTION_MODIFY);
             if(parent) parent->setProperty("LatitudeWiFiLinkActivateResult",(UInt32)result,32);
