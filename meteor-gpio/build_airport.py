@@ -9,6 +9,7 @@ from apply_airport_phy_fixes import apply as apply_phy
 from apply_airport_join_fixes import apply as apply_join
 from apply_airport_mac_fixes import apply as apply_mac
 from apply_airport_connection_fixes import apply as apply_connection
+from apply_airport_assert_fixes import apply as apply_assert
 
 def patch(wifi):
     apply_wifi(wifi)
@@ -93,6 +94,7 @@ if __name__=='__main__':
     apply_join(wifi)
     apply_mac(wifi)
     apply_connection(wifi)
+    apply_assert(wifi)
     (out/'instrumented-ItlIwx.cpp').write_text((wifi/'itlwm/hal_iwx/ItlIwx.cpp').read_text())
     (out/'instrumented-AirportItlwm.cpp').write_text((wifi/'AirportItlwm/AirportItlwm.cpp').read_text())
     (out/'instrumented-AirportItlwmV2.cpp').write_text((wifi/'AirportItlwm/AirportItlwmV2.cpp').read_text())
