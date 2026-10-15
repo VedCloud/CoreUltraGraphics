@@ -68,6 +68,20 @@ s = once(s, '''    buffer = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_t
             setProperty("LatitudeELANLastInput", report, return_size);
         }
     }''')
+s = once(s, '''void VoodooI2CHIDDevice::simulateInterrupt(OSObject* owner, IOTimerEventSource* timer) {
+    AbsoluteTime prev_time = last_multi_touch_event;''', '''void VoodooI2CHIDDevice::simulateInterrupt(OSObject* owner, IOTimerEventSource* timer) {
+    // ELAN hybrid reports must not depend on another digitizer's global timestamp
+    // or alternate between 2 ms busy and 50 ms idle polling. Yield after each read.
+    if (hid_descriptor.wVendorID == 0x04f3 && hid_descriptor.wProductID == 0x328e) {
+        if (!getProperty("LatitudeELANPollingIntervalMS"))
+            setProperty("LatitudeELANPollingIntervalMS", 4, 32);
+        if (awake)
+            VoodooI2CHIDDevice::getInputReport();
+        if (interrupt_simulator)
+            interrupt_simulator->setTimeoutMS(4);
+        return;
+    }
+    AbsoluteTime prev_time = last_multi_touch_event;''')
 p.write_text(s)
 p = hid/'VoodooI2CHID/VoodooI2CPrecisionTouchpadHIDEventDriver.cpp'
 s = p.read_text()
@@ -144,7 +158,7 @@ text = (hid/'VoodooI2CHID/Info.plist').read_text().replace('$(EXECUTABLE_NAME)',
 info = plistlib.loads(text.encode())
 (binary.parents[1]/'Info.plist').write_bytes(plistlib.dumps(info, sort_keys=False))
 assert '_kmod_info' in subprocess.check_output(['nm','-gU',str(binary)], text=True)
-for marker in [b'LatitudeELANInputCount',b'LatitudeELANMaxContacts',b'LatitudePrecisionSynchronousReadback',b'LatitudeELANSurfaceEnableStatus']:
+for marker in [b'LatitudeELANInputCount',b'LatitudeELANMaxContacts',b'LatitudePrecisionSynchronousReadback',b'LatitudeELANSurfaceEnableStatus',b'LatitudeELANPollingIntervalMS']:
     assert marker in binary.read_bytes()
 for p in (hid/'VoodooI2CHID').glob('*.cpp'):
     (objdir/p.name).write_bytes(p.read_bytes())
