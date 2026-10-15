@@ -1,0 +1,41 @@
+name: Meteor Lake GPIO experimental build
+on:
+  push:
+    branches: [meteor-lake-gpio-build]
+  pull_request:
+    branches: [main]
+    paths: ['meteor-gpio/**', '.github/workflows/meteor-gpio.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: VoodooI2C/VoodooGPIO
+          ref: 717ab2a40a0debd33ec8b35cebed7a4ced7dbfbc
+          path: .deps/VoodooGPIO
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: acidanthera/MacKernelSDK
+          ref: 3f750085caa17ec3a7880f11c11bf4f48cd6a164
+          path: .deps/MacKernelSDK
+          persist-credentials: false
+      - name: Compile GPIO driver and inspect artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-results
+          python3 meteor-gpio/build_gpio.py 2>&1 | tee ci-results/build.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: MeteorLake-GPIO-experimental
+          path: ci-results/
+          if-no-files-found: error

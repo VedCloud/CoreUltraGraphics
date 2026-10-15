@@ -1,0 +1,70 @@
+name: Latitude desktop peripheral trials
+on:
+  push:
+    branches: [meteor-lake-gpio-build]
+    paths: ['meteor-gpio/build_desktop_inputs.py', 'meteor-gpio/apply_touchpad_fixes.py', 'meteor-gpio/desktop/**', '.github/workflows/desktop-peripherals.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: VoodooI2C/VoodooI2C
+          ref: 5c0c99cc451b03790c684ce6552c3f61620ad46b
+          path: .deps/VoodooI2C
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: OpenIntelWireless/itlwm
+          ref: 4ac4c79bc7e34f8764038fc382630a29eb46213d
+          path: .deps/itlwm
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: acidanthera/MacKernelSDK
+          ref: 3f750085caa17ec3a7880f11c11bf4f48cd6a164
+          path: .deps/MacKernelSDK
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: acidanthera/VoodooInput
+          ref: d897813718c2ef9ad143b6a86240fe52dcb1693e
+          path: .deps/VoodooInput
+          persist-credentials: false
+      - name: Build input fallback and standalone desktop probes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-diagnostics
+          python3 meteor-gpio/build_desktop_inputs.py 2>&1 | tee ci-diagnostics/input-build.log
+          python3 meteor-gpio/desktop/build_helpers.py 2>&1 | tee ci-diagnostics/helpers-build.log
+      - uses: actions/checkout@v4
+        with:
+          repository: acidanthera/Lilu
+          ref: 0515f40b7f2a096adc85e832a4c6104fbd07f936
+          path: .deps/Lilu
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: acidanthera/BrcmPatchRAM
+          ref: 65389020769837e92e9fb939bac34bd9a3e25bb2
+          path: .deps/BrcmPatchRAM
+          persist-credentials: false
+      - name: Build matching BlueToolFixup debug driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 meteor-gpio/desktop/build_bluetooth_debug.py 2>&1 | tee ci-diagnostics/bluetool-build.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Latitude-desktop-peripherals
+          path: ci-diagnostics/
+          if-no-files-found: error
