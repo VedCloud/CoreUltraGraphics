@@ -6,6 +6,7 @@ import subprocess
 from apply_report_fixes import apply
 from apply_initialization_fixes import apply as apply_initialization
 from apply_touchpad_fixes import apply as apply_touchpad
+from apply_touchpad_gpio import apply as apply_touchpad_gpio
 
 root=Path.cwd()
 i2c=root/'.deps/VoodooI2C'
@@ -69,6 +70,7 @@ controller.write_text(s)
 apply(i2c, wifi)
 apply_initialization(i2c, wifi)
 apply_touchpad(i2c)
+apply_touchpad_gpio(i2c)
 (out/'instrumented-DeviceNub.cpp').write_text(nub.read_text())
 macsdk=subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path'],text=True).strip()
 headers=list((root/'.deps/VoodooInput').rglob('VoodooInputTransducer.h'))

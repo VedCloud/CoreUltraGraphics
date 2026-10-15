@@ -2,7 +2,8 @@ name: Latitude desktop peripheral trials
 on:
   push:
     branches: [meteor-lake-gpio-build]
-    paths: ['meteor-gpio/build_desktop_inputs.py', 'meteor-gpio/apply_touchpad_fixes.py', 'meteor-gpio/desktop/**', '.github/workflows/desktop-peripherals.yml']
+    paths: ['meteor-gpio/build_desktop_inputs.py', 'meteor-gpio/apply_touchpad_fixes.py', 'meteor-gpio/apply_touchpad_gpio.py', 'meteor-gpio/desktop/**', '.github/workflows/desktop-peripherals.yml']
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -43,6 +44,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ci-diagnostics
+          python3 meteor-gpio/desktop/test_touchpad_resources.py 2>&1 | tee ci-diagnostics/resource-tests.log
           python3 meteor-gpio/build_desktop_inputs.py 2>&1 | tee ci-diagnostics/input-build.log
           python3 meteor-gpio/desktop/build_helpers.py 2>&1 | tee ci-diagnostics/helpers-build.log
       - uses: actions/checkout@v4
