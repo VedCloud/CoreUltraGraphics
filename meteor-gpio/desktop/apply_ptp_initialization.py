@@ -42,6 +42,28 @@ def apply(hid):
             latitude_explicit_failures = 3;
             latitude_explicit_active = false;
             latitude_recoveries = 3;
+            // Read firmware decisions rather than infer them from attachment.
+            const char *names[] = {"\\\\OSYS","\\\\TPDM","\\\\PS2D","HID2"};
+            const char *keys[] = {"LatitudeELANFirmwareOSYS","LatitudeELANFirmwareTPDM",
+                "LatitudeELANFirmwarePS2D","LatitudeELANFirmwareHIDRegister"};
+            const char *statusKeys[] = {"LatitudeELANFirmwareOSYSStatus","LatitudeELANFirmwareTPDMStatus",
+                "LatitudeELANFirmwarePS2DStatus","LatitudeELANFirmwareHIDRegisterStatus"};
+            for (unsigned i=0;i<4;++i) {
+                OSObject *object = nullptr;
+                IOReturn firmwareStatus = acpi_device->evaluateObject(names[i],&object);
+                setProperty(statusKeys[i],(UInt32)firmwareStatus,32);
+                OSNumber *number = OSDynamicCast(OSNumber,object);
+                if (firmwareStatus == kIOReturnSuccess && number)
+                    setProperty(keys[i],number->unsigned32BitValue(),32);
+                OSSafeReleaseNULL(object);
+            }
+            OSObject *resources = nullptr;
+            IOReturn resourceStatus = acpi_device->evaluateObject("_CRS",&resources);
+            setProperty("LatitudeELANFirmwareCRSStatus",(UInt32)resourceStatus,32);
+            OSData *resourceData = OSDynamicCast(OSData,resources);
+            if (resourceStatus == kIOReturnSuccess && resourceData)
+                setProperty("LatitudeELANFirmwareCRSBytes",resourceData);
+            OSSafeReleaseNULL(resources);
             UInt8 caps[2] = {}, blob[257] = {}, vendor[5] = {}, mode[3] = {};
             IOReturn status = latitudeELANFeature(2,sizeof(caps),caps);
             setProperty("LatitudeELANCapabilitiesStatus", (UInt32)status,32);
