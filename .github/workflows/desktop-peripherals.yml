@@ -49,6 +49,19 @@ jobs:
           python3 meteor-gpio/desktop/build_helpers.py 2>&1 | tee ci-diagnostics/helpers-build.log
       - uses: actions/checkout@v4
         with:
+          repository: VoodooI2C/VoodooGPIO
+          ref: 717ab2a40a0debd33ec8b35cebed7a4ced7dbfbc
+          path: .deps/VoodooGPIO
+          persist-credentials: false
+      - name: Verify and build ELAN GPIO input routing correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 meteor-gpio/desktop/test_gpio_input_mode.py 2>&1 | tee ci-diagnostics/gpio-mode-tests.log
+          python3 meteor-gpio/build_gpio.py 2>&1 | tee ci-diagnostics/gpio-build.log
+          cp -R ci-results/VoodooGPIO.kext ci-diagnostics/
+      - uses: actions/checkout@v4
+        with:
           repository: VoodooI2C/VoodooI2CHID
           ref: 27277936bc16c215ae7f9b31e76e3231778d04bd
           path: .deps/VoodooI2CHID

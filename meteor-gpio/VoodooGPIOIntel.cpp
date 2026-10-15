@@ -323,6 +323,19 @@ bool VoodooGPIOIntel::intel_gpio_irq_set_type(unsigned pin, unsigned type) {
     /* Pmode of zero makes sure pin is muxed into the GPIO controller logic */
     value &= ~(PADCFG0_RXEVCFG_MASK | PADCFG0_RXINV | PADCFG0_PMODE_MASK);
 
+    // Linux intel_gpio_irq_type() calls intel_gpio_set_gpio_mode(), which
+    // also enables RX, disables TX and removes the firmware's direct routing.
+    // The original port omitted those steps. Limit this correction to the
+    // Latitude ELAN's verified Meteor Lake-P hardware pad (GPIO 387).
+    const bool latitude_elan = pin == 232 &&
+        strcmp(getMetaClass()->getClassName(), "VoodooGPIOMeteorLakeP") == 0;
+    if (latitude_elan) {
+        setProperty("LatitudeELANPadConfigBefore", readl(reg), 32);
+        value &= ~(PADCFG0_GPIORXDIS | PADCFG0_GPIROUTIOXAPIC |
+                   PADCFG0_GPIROUTSCI | PADCFG0_GPIROUTSMI | PADCFG0_GPIROUTNMI);
+        value |= PADCFG0_GPIOTXDIS;
+    }
+
     if ((type & IRQ_TYPE_EDGE_BOTH) == IRQ_TYPE_EDGE_BOTH) {
         value |= PADCFG0_RXEVCFG_EDGE_BOTH << PADCFG0_RXEVCFG_SHIFT;
     } else if (type & IRQ_TYPE_EDGE_FALLING) {
@@ -338,6 +351,17 @@ bool VoodooGPIOIntel::intel_gpio_irq_set_type(unsigned pin, unsigned type) {
     }
 
     writel(value, reg);
+    if (latitude_elan) {
+        const UInt32 mask = PADCFG0_RXEVCFG_MASK | PADCFG0_RXINV |
+            PADCFG0_PMODE_MASK | PADCFG0_GPIORXDIS | PADCFG0_GPIOTXDIS |
+            PADCFG0_GPIROUTIOXAPIC | PADCFG0_GPIROUTSCI |
+            PADCFG0_GPIROUTSMI | PADCFG0_GPIROUTNMI;
+        UInt32 actual = readl(reg);
+        bool configured = (actual & mask) == (value & mask);
+        setProperty("LatitudeELANPadConfigAfter", actual, 32);
+        setProperty("LatitudeELANPadConfigVerified", configured);
+        return configured;
+    }
     return true;
 }
 
@@ -1014,8 +1038,13 @@ IOReturn VoodooGPIOIntel::setInterruptTypeForPin(int pin, int type) {
         return kIOReturnNoInterrupt;
 
     unsigned communityidx = hw_pin - community->pin_base;
+    bool configured = intel_gpio_irq_set_type(hw_pin, type);
+    if (pin == 387 && strcmp(getMetaClass()->getClassName(), "VoodooGPIOMeteorLakeP") == 0) {
+        setProperty("LatitudeELANGPIOConfigurationStatus", configured);
+        if (!configured)
+            return kIOReturnUnsupported;
+    }
     community->interruptTypes[communityidx] = type;
-    intel_gpio_irq_set_type(hw_pin, type);
     return kIOReturnSuccess;
 }
 

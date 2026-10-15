@@ -45,5 +45,21 @@ def apply(i2c):
     s = once(s, '    if (force_polling) {', '''    if (latitude_touchpad_resources && !latitude_touchpad_gpio)
         force_polling = true;
     if (force_polling) {''')
+    # IOInterruptEventSource may ask the trigger type before registration.
+    # GPIO's interruptTypes[] has not been populated at that point. The
+    # validated resource already supplies the actual level trigger.
+    s = once(s, '        return gpio_controller->getInterruptType(gpio_pin, interrupt_type);', '''        if (gpio_pin == 387 && latitudeTouchpadFallbackAllowed(acpi_device,
+                controller->nub->controller->physical_device.pci_device)) {
+            *interrupt_type = (gpio_irq & 0x0c) ? kIOInterruptTypeLevel : kIOInterruptTypeEdge;
+            return kIOReturnSuccess;
+        }
+        return gpio_controller->getInterruptType(gpio_pin, interrupt_type);''')
+    s = once(s, '        gpio_controller->setInterruptTypeForPin(gpio_pin, gpio_irq);', '''        IOReturn configuration = gpio_controller->setInterruptTypeForPin(gpio_pin, gpio_irq);
+        if (gpio_pin == 387 && latitudeTouchpadFallbackAllowed(acpi_device,
+                controller->nub->controller->physical_device.pci_device)) {
+            setProperty("LatitudeELANGPIORegistrationStatus", (UInt32)configuration, 32);
+            if (configuration != kIOReturnSuccess)
+                return configuration; // Let HID create its existing polling timer.
+        }''')
     assert s.count('LatitudeTouchpadGPIOFallback') == 1
     path.write_text(s)
