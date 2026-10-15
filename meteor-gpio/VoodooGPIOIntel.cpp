@@ -735,6 +735,16 @@ bool VoodooGPIOIntel::start(IOService *provider) {
     isInterruptBusy = false;
     controllerIsAwake = true;
 
+    if (strcmp(getMetaClass()->getClassName(), "VoodooGPIOMeteorLakeP") == 0) {
+        latitude_elan_timer = IOTimerEventSource::timerEventSource(this,
+            OSMemberFunctionCast(IOTimerEventSource::Action, this,
+                                 &VoodooGPIOIntel::latitudeELANWatchdog));
+        if (latitude_elan_timer && workLoop->addEventSource(latitude_elan_timer) != kIOReturnSuccess)
+            OSSafeReleaseNULL(latitude_elan_timer);
+        // No timer is scheduled until the verified ELAN pin has a subscriber.
+        setProperty("LatitudeELANWatchdogAvailable", latitude_elan_timer != nullptr);
+    }
+
     registerService();
 
     // Declare an array of two IOPMPowerState structures (kMyNumberOfStates = 2).
@@ -765,6 +775,14 @@ bool VoodooGPIOIntel::start(IOService *provider) {
 
 void VoodooGPIOIntel::stop(IOService *provider) {
     IOLog("%s::VoodooGPIO stop!\n", getName());
+
+    if (latitude_elan_timer) {
+        latitude_elan_timer->cancelTimeout();
+        latitude_elan_timer->disable();
+        if (workLoop)
+            workLoop->removeEventSource(latitude_elan_timer);
+        OSSafeReleaseNULL(latitude_elan_timer);
+    }
 
     if (this->command_gate) {
         if (this->workLoop) {
@@ -960,20 +978,32 @@ IOReturn VoodooGPIOIntel::registerInterrupt(int pin, OSObject *target, IOInterru
 
     IOLog("%s::Successfully registered hardware pin 0x%02X for GPIO IRQ pin 0x%02X\n", getName(), hw_pin, pin);
 
-    if (registered_pin_list->getCount() == 1) {
-        return getProvider()->registerInterrupt(0, this, OSMemberFunctionCast(IOInterruptAction, this, &VoodooGPIOIntel::InterruptOccurred));
+    IOReturn result = kIOReturnSuccess;
+    if (registered_pin_list->getCount() == 1)
+        result = getProvider()->registerInterrupt(0, this, OSMemberFunctionCast(IOInterruptAction, this, &VoodooGPIOIntel::InterruptOccurred));
+    if (result == kIOReturnSuccess && pin == 387 && latitude_elan_timer) {
+        setProperty("LatitudeELANWatchdogIntervalMS", 2, 32);
+        latitude_elan_timer->setTimeoutMS(2);
     }
-    return kIOReturnSuccess;
+    return result;
 }
 
 /**
  * @param pin 'Software' pin number (i.e. GpioInt).
  */
 IOReturn VoodooGPIOIntel::unregisterInterrupt(int pin) {
+    // Cancel and clear the subscriber on the watchdog's workloop gate so a
+    // timer cannot retain a stale client pointer during HID teardown.
+    if (pin == 387 && latitude_elan_timer && command_gate && !workLoop->inGate())
+        return command_gate->runAction(OSMemberFunctionCast(IOCommandGate::Action,
+            this, &VoodooGPIOIntel::latitudeELANUnregisterGated), &pin);
     struct intel_community *community;
     SInt32 hw_pin = intel_gpio_to_pin(pin, &community, nullptr);
     if (hw_pin < 0)
         return kIOReturnNoInterrupt;
+
+    if (pin == 387 && latitude_elan_timer)
+        latitude_elan_timer->cancelTimeout();
 
     IOLog("%s::Unregistering hardware pin 0x%02X for GPIO IRQ pin 0x%02X\n", getName(), hw_pin, pin);
 
@@ -1049,9 +1079,62 @@ IOReturn VoodooGPIOIntel::setInterruptTypeForPin(int pin, int type) {
 }
 
 void VoodooGPIOIntel::InterruptOccurred(void *refCon, IOService *nub, int source) {
+    if (latitude_elan_timer)
+        ++latitude_parent_irqs; // Published from the timer, never allocate in an ISR.
     for (int i = 0; i < registered_pin_list->getCount(); i++) {
         if (OSNumber* registered_pin = OSDynamicCast(OSNumber, registered_pin_list->getObject(i))) {
             intel_gpio_pin_irq_handler(registered_pin->unsigned32BitValue());
         }
     }
+}
+
+IOReturn VoodooGPIOIntel::latitudeELANUnregisterGated(int *pin) {
+    return unregisterInterrupt(*pin);
+}
+
+void VoodooGPIOIntel::latitudeELANWatchdog(OSObject *owner, IOTimerEventSource *timer) {
+    if (!controllerIsAwake) {
+        timer->setTimeoutMS(20);
+        return;
+    }
+    intel_community *community = nullptr;
+    intel_padgroup *group = nullptr;
+    SInt32 pin = intel_gpio_to_pin(387, &community, &group);
+    if (pin != 232 || !community || !group || !community->regs)
+        return;
+    unsigned index = pin - community->pin_base;
+    OSObject *target = community->pinInterruptActionOwners[index];
+    IOInterruptAction action = community->pinInterruptAction[index];
+    if (!target || !action)
+        return; // Unregistered clients must never be called or rearmed.
+    IOVirtualAddress pad = intel_get_padcfg(pin, PADCFG0);
+    if (!pad)
+        return;
+
+    UInt32 value = readl(pad);
+    UInt32 bit = static_cast<UInt32>(BIT(pin - group->base));
+    UInt32 enabled = readl(community->regs + community->ie_offset + group->reg_num * 4);
+    // Linux intel_gpio_get() reads physical RXSTATE for an input GPIO. The
+    // resource is active-low. Unlike blind I2C polling, an idle high line
+    // generates no reads. Respect the interrupt mask while HID drains input.
+    bool low = !(value & PADCFG0_GPIORXSTATE);
+    ++latitude_elan_ticks;
+    if (low)
+        ++latitude_elan_low_samples;
+    if (low && (enabled & bit) && !(value & PADCFG0_GPIORXDIS) &&
+        (value & PADCFG0_GPIOTXDIS) && !(value & PADCFG0_PMODE_MASK)) {
+        action(target, community->pinInterruptRefcons[index], this, 387);
+        ++latitude_elan_dispatches;
+    }
+    if (latitude_elan_ticks <= 16 || !(latitude_elan_ticks & 0x7f)) {
+        setProperty("LatitudeELANWatchdogTicks", latitude_elan_ticks, 64);
+        setProperty("LatitudeELANLowSamples", latitude_elan_low_samples, 64);
+        setProperty("LatitudeELANWatchdogDispatches", latitude_elan_dispatches, 64);
+        setProperty("LatitudeELANParentIRQs", latitude_parent_irqs, 32);
+        setProperty("LatitudeELANPadConfigSample", value, 32);
+        setProperty("LatitudeELANGPIOEnableSample", enabled, 32);
+        setProperty("LatitudeELANGPIOPendingSample", readl(community->regs +
+            (community->is_offset ? community->is_offset : GPI_IS) + group->reg_num * 4), 32);
+    }
+    timer->setTimeoutMS(2);
 }

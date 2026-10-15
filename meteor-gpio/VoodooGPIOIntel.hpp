@@ -10,6 +10,7 @@
 #ifndef VoodooGPIOIntel_h
 #define VoodooGPIOIntel_h
 #include "VoodooGPIO.hpp"
+#include <IOKit/IOTimerEventSource.h>
 
 /**
  * struct intel_pingroup - Description about group of pins
@@ -176,6 +177,13 @@ protected:
  private:
     struct intel_pinctrl_context context;
     UInt32 nInactiveCommunities;
+    IOTimerEventSource *latitude_elan_timer = nullptr;
+    UInt64 latitude_elan_ticks = 0;
+    UInt64 latitude_elan_low_samples = 0;
+    UInt64 latitude_elan_dispatches = 0;
+    volatile UInt32 latitude_parent_irqs = 0;
+    void latitudeELANWatchdog(OSObject *owner, IOTimerEventSource *timer);
+    IOReturn latitudeELANUnregisterGated(int *pin);
 
     struct intel_community *intel_get_community(unsigned pin);
     struct intel_padgroup *intel_community_get_padgroup(struct intel_community *community, unsigned pin);

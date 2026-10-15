@@ -58,6 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 meteor-gpio/desktop/test_gpio_input_mode.py 2>&1 | tee ci-diagnostics/gpio-mode-tests.log
+          python3 meteor-gpio/desktop/test_gpio_watchdog.py 2>&1 | tee ci-diagnostics/gpio-watchdog-tests.log
           python3 meteor-gpio/build_gpio.py 2>&1 | tee ci-diagnostics/gpio-build.log
           cp -R ci-results/VoodooGPIO.kext ci-diagnostics/
       - uses: actions/checkout@v4
