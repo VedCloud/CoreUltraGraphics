@@ -75,6 +75,21 @@ s = once(s, '    ready = true;', '''    // Do not issue synchronous GET_REPORT f
     // Keep upstream mode switching and expose the cached mode, without extra bus I/O.
     setProperty("LatitudePrecisionModeValue", digitiser.input_mode->getValue(), 32);
     setProperty("LatitudePrecisionSynchronousReadback", false);
+    // Captured ELAN 04f3:328e descriptor: report 5 has Surface Switch (0x57)
+    // and Button Switch (0x58) at bits 0/1, followed by 14 constant bits.
+    // Match Linux TOUCHPAD_REPORT_ALL without issuing a blocking GET_REPORT.
+    if (getVendorID() == 0x04f3 && getProductID() == 0x328e && hid_device) {
+        const UInt8 enable_surface[] = { 0x05, 0x03, 0x00 };
+        IOBufferMemoryDescriptor *feature = IOBufferMemoryDescriptor::inTaskWithOptions(
+            kernel_task, 0, sizeof(enable_surface));
+        IOReturn status = kIOReturnNoMemory;
+        if (feature) {
+            feature->writeBytes(0, enable_surface, sizeof(enable_surface));
+            status = hid_device->setReport(feature, kIOHIDReportTypeFeature, 0x05);
+            feature->release();
+        }
+        setProperty("LatitudeELANSurfaceEnableStatus", (UInt32)status, 32);
+    }
     ready = true;''')
 s = once(s, '    super::handleInterruptReport(timestamp, report, report_type, report_id);', '''    super::handleInterruptReport(timestamp, report, report_type, report_id);
     // Record multi-finger delivery after HID parsing; do not capture keyboard input.
@@ -129,7 +144,7 @@ text = (hid/'VoodooI2CHID/Info.plist').read_text().replace('$(EXECUTABLE_NAME)',
 info = plistlib.loads(text.encode())
 (binary.parents[1]/'Info.plist').write_bytes(plistlib.dumps(info, sort_keys=False))
 assert '_kmod_info' in subprocess.check_output(['nm','-gU',str(binary)], text=True)
-for marker in [b'LatitudeELANInputCount',b'LatitudeELANMaxContacts',b'LatitudePrecisionSynchronousReadback']:
+for marker in [b'LatitudeELANInputCount',b'LatitudeELANMaxContacts',b'LatitudePrecisionSynchronousReadback',b'LatitudeELANSurfaceEnableStatus']:
     assert marker in binary.read_bytes()
 for p in (hid/'VoodooI2CHID').glob('*.cpp'):
     (objdir/p.name).write_bytes(p.read_bytes())
