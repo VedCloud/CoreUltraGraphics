@@ -58,6 +58,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 meteor-gpio/desktop/build_hid_stability.py 2>&1 | tee ci-diagnostics/hid-build.log
+          python3 meteor-gpio/desktop/build_input_identity.py 2>&1 | tee ci-diagnostics/identity-build.log
       - uses: actions/checkout@v4
         with:
           repository: acidanthera/Lilu
