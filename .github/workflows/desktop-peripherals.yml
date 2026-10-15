@@ -49,6 +49,17 @@ jobs:
           python3 meteor-gpio/desktop/build_helpers.py 2>&1 | tee ci-diagnostics/helpers-build.log
       - uses: actions/checkout@v4
         with:
+          repository: VoodooI2C/VoodooI2CHID
+          ref: 27277936bc16c215ae7f9b31e76e3231778d04bd
+          path: .deps/VoodooI2CHID
+          persist-credentials: false
+      - name: Build HID crash guard and ELAN report validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 meteor-gpio/desktop/build_hid_stability.py 2>&1 | tee ci-diagnostics/hid-build.log
+      - uses: actions/checkout@v4
+        with:
           repository: acidanthera/Lilu
           ref: 0515f40b7f2a096adc85e832a4c6104fbd07f936
           path: .deps/Lilu
