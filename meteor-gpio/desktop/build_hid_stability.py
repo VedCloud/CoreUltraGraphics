@@ -117,6 +117,8 @@ s = once(s, '    super::handleInterruptReport(timestamp, report, report_type, re
     }''')
 p.write_text(s)
 # Standalone checkout: resolve the original monorepo-relative header references.
+from apply_custom_elan import apply as apply_custom_elan
+apply_custom_elan(hid, out)
 for p in (hid/'VoodooI2CHID').rglob('*'):
     if p.suffix not in ('.cpp', '.hpp'): continue
     s = p.read_text()
