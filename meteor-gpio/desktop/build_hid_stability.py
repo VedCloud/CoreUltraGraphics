@@ -119,6 +119,8 @@ p.write_text(s)
 # Standalone checkout: resolve the original monorepo-relative header references.
 from apply_custom_elan import apply as apply_custom_elan
 apply_custom_elan(hid, out)
+from apply_gpio_readiness import apply as apply_gpio_readiness
+apply_gpio_readiness(hid)
 for p in (hid/'VoodooI2CHID').rglob('*'):
     if p.suffix not in ('.cpp', '.hpp'): continue
     s = p.read_text()
@@ -165,3 +167,4 @@ for marker in [b'LatitudeELANInputCount',b'LatitudeELANMaxContacts',b'LatitudePr
 for p in (hid/'VoodooI2CHID').glob('*.cpp'):
     (objdir/p.name).write_bytes(p.read_bytes())
 print('Pinned HID stability build passed; GPIO mapping remains unchanged.')
+subprocess.run(['python3',str(Path(__file__).resolve().parent/'build_gpio_readiness.py')],check=True)
