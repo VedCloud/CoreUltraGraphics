@@ -71,12 +71,21 @@ s = once(s, '''    buffer = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_t
 p.write_text(s)
 p = hid/'VoodooI2CHID/VoodooI2CPrecisionTouchpadHIDEventDriver.cpp'
 s = p.read_text()
-s = once(s, '    ready = true;', '''    // Read back through the HID owner; record errors instead of assuming a write worked.
-    IOHIDElementCookie cookie = digitiser.input_mode->getCookie();
-    IOReturn status = hid_device->updateElementValues(&cookie, 1);
-    setProperty("LatitudePrecisionModeReadStatus", (UInt32)status, 32);
+s = once(s, '    ready = true;', '''    // Do not issue synchronous GET_REPORT from inside handleStart.
+    // Keep upstream mode switching and expose the cached mode, without extra bus I/O.
     setProperty("LatitudePrecisionModeValue", digitiser.input_mode->getValue(), 32);
+    setProperty("LatitudePrecisionSynchronousReadback", false);
     ready = true;''')
+s = once(s, '    super::handleInterruptReport(timestamp, report, report_type, report_id);', '''    super::handleInterruptReport(timestamp, report, report_type, report_id);
+    // Record multi-finger delivery after HID parsing; do not capture keyboard input.
+    if (hid_device && getVendorID() == 0x04f3 &&
+        getProductID() == 0x328e && digitiser.contact_count) {
+        UInt32 count = digitiser.contact_count->getValue();
+        setProperty("LatitudeELANContactCount", count, 32);
+        OSNumber *previous = OSDynamicCast(OSNumber, getProperty("LatitudeELANMaxContacts"));
+        if (!previous || count > previous->unsigned32BitValue())
+            setProperty("LatitudeELANMaxContacts", count, 32);
+    }''')
 p.write_text(s)
 # Standalone checkout: resolve the original monorepo-relative header references.
 for p in (hid/'VoodooI2CHID').rglob('*'):
@@ -120,7 +129,7 @@ text = (hid/'VoodooI2CHID/Info.plist').read_text().replace('$(EXECUTABLE_NAME)',
 info = plistlib.loads(text.encode())
 (binary.parents[1]/'Info.plist').write_bytes(plistlib.dumps(info, sort_keys=False))
 assert '_kmod_info' in subprocess.check_output(['nm','-gU',str(binary)], text=True)
-for marker in [b'LatitudeELANInputCount',b'LatitudePrecisionModeReadStatus']:
+for marker in [b'LatitudeELANInputCount',b'LatitudeELANMaxContacts',b'LatitudePrecisionSynchronousReadback']:
     assert marker in binary.read_bytes()
 for p in (hid/'VoodooI2CHID').glob('*.cpp'):
     (objdir/p.name).write_bytes(p.read_bytes())
