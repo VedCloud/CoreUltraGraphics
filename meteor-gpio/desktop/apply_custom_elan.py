@@ -34,11 +34,24 @@ int main() {
     assert(!latitudeDecodeELAN(nullptr,29,f));
     assert(latitudeELANShouldRecover(true,true,35,true,1024,0));
     assert(!latitudeELANShouldRecover(true,true,0,true,1024,0));
-    assert(!latitudeELANShouldRecover(true,true,35,false,1024,0));
+    assert(latitudeELANShouldRecover(true,true,35,false,1024,0));
     assert(!latitudeELANShouldRecover(true,true,35,true,1023,0));
     assert(!latitudeELANShouldRecover(true,true,35,true,1024,3));
     assert(!latitudeELANShouldRecover(false,true,35,true,1024,0));
     assert(!latitudeELANShouldRecover(true,false,35,true,1024,0));
+    unsigned char cmd[7];
+    assert(latitudeELANInputCommand(cmd,0x1234,0x5678));
+    const unsigned char expected[7]={0x34,0x12,0x1f,2,0x54,0x78,0x56};
+    for(unsigned i=0;i<7;i++) assert(cmd[i]==expected[i]);
+    assert(!latitudeELANInputCommand(nullptr,0,0));
+    assert(!latitudeELANInputCommand(cmd,65536,0));
+    unsigned char wire[31]={31,0,0x54};
+    assert(latitudeELANWireFrame(wire,31));
+    wire[0]=30; assert(!latitudeELANWireFrame(wire,31));
+    wire[0]=31; wire[1]=1; assert(!latitudeELANWireFrame(wire,31));
+    wire[1]=0; wire[2]=1; assert(!latitudeELANWireFrame(wire,31));
+    assert(!latitudeELANWireFrame(wire,30));
+    assert(!latitudeELANWireFrame(nullptr,31));
 }
 '''
     with tempfile.TemporaryDirectory() as folder:
@@ -97,6 +110,59 @@ int main() {
     }
 '''+needle)
     p.write_text(s)
+
+    # Alternate standards-defined INPUT GET_REPORT path for an exhausted raw
+    # polling stream. Only exact-device, fully validated 31-byte replies pass.
+    p=hid/'VoodooI2CHID/VoodooI2CHIDDevice.cpp';s=p.read_text()
+    needle='    ret = api->readI2C(report, hid_descriptor.wMaxInputLength);'
+    assert s.count(needle)==1
+    s=s.replace(needle,'''    bool explicit_read = latitude_elan && awake && ready_for_input &&
+        latitude_explicit_failures < 3 && (latitude_explicit_active ||
+        (latitude_ptp_idle_reads >= 64 && !(latitude_ptp_idle_reads & 63)));
+    bool duplicate_explicit = false;
+    if (explicit_read) {
+        UInt8 command[7];
+        latitudeELANInputCommand(command, hid_descriptor.wCommandRegister, hid_descriptor.wDataRegister);
+        ret = api->writeReadI2C(command, sizeof(command), report, hid_descriptor.wMaxInputLength);
+        ++latitude_explicit_attempts;
+        setProperty("LatitudeELANExplicitAttempts", latitude_explicit_attempts, 64);
+        setProperty("LatitudeELANExplicitStatus", (UInt32)ret, 32);
+        setProperty("LatitudeELANExplicitLastBytes", report, hid_descriptor.wMaxInputLength);
+        if (ret == kIOReturnSuccess && latitudeELANWireFrame(report, hid_descriptor.wMaxInputLength)) {
+            duplicate_explicit = latitude_previous_explicit &&
+                !memcmp(latitude_explicit_previous, report, 31);
+            memcpy(latitude_explicit_previous, report, 31);
+            latitude_previous_explicit = true;
+            latitude_explicit_active = true;
+            setProperty("LatitudeELANExplicitFrames", ++latitude_explicit_frames, 64);
+        } else {
+            latitude_explicit_active = false;
+            latitude_previous_explicit = false;
+            setProperty("LatitudeELANExplicitFailures", ++latitude_explicit_failures, 32);
+            // Resume the established raw read path in this same polling cycle.
+            bzero(report, hid_descriptor.wMaxInputLength);
+            ret = api->readI2C(report, hid_descriptor.wMaxInputLength);
+        }
+        setProperty("LatitudeELANExplicitActive", latitude_explicit_active);
+    } else {
+        ret = api->readI2C(report, hid_descriptor.wMaxInputLength);
+    }''')
+    needle='    if (return_size == 2)\n        goto exit;'
+    assert s.count(needle)==1
+    s=s.replace(needle,needle+'''
+    // A GET_REPORT snapshot may be identical; do not replay stale scan times.
+    if (duplicate_explicit)
+        goto exit;''')
+    needle='''        if (!getProperty("LatitudeELANPollingIntervalMS"))
+            setProperty("LatitudeELANPollingIntervalMS", 4, 32);'''
+    assert s.count(needle)==1
+    s=s.replace(needle,needle+'''
+        if (!getProperty("LatitudeELANTransportBuild"))
+            setProperty("LatitudeELANTransportBuild", "test16-explicit-input");
+        setProperty("LatitudeELANPTPIdleReads", latitude_ptp_idle_reads, 64);''')
+    s=s.replace('// Recover only after real PTP traffic, a legacy mouse packet and a',
+                '// Recover only after real PTP traffic and a')
+    p.write_text(s)
     p=hid/'VoodooI2CHID/VoodooI2CPrecisionTouchpadHIDEventDriver.hpp'
     s=p.read_text();assert s.count('    bool ready = false;')==1
     p.write_text(s.replace('    bool ready = false;',
@@ -112,8 +178,13 @@ int main() {
     if (latitude_elan) {
         ++latitude_reads;
         if (return_size == 0) ++latitude_resets;
-        if (return_size > hid_descriptor.wMaxInputLength || return_size == 1)
+        if (return_size > hid_descriptor.wMaxInputLength || return_size == 1) {
             ++latitude_invalid;
+            if (latitude_invalid <= 4) {
+                setProperty("LatitudeELANInvalidLength", return_size, 32);
+                setProperty("LatitudeELANInvalidBytes", report, hid_descriptor.wMaxInputLength);
+            }
+        }
         if (latitude_reads <= 16 || !(latitude_reads & 0x7f)) {
             setProperty("LatitudeELANReadAttempts", latitude_reads, 64);
             setProperty("LatitudeELANResetPackets", latitude_resets, 64);
@@ -128,6 +199,12 @@ int main() {
     p=hid/'VoodooI2CHID/VoodooI2CHIDDevice.hpp'
     s=p.read_text().replace('    UInt64 latitude_reads = 0;', '''    UInt64 latitude_reads = 0;
     UInt64 latitude_ptp_idle_reads = 0;
+    bool latitude_explicit_active = false;
+    UInt32 latitude_explicit_failures = 0;
+    UInt64 latitude_explicit_attempts = 0;
+    UInt64 latitude_explicit_frames = 0;
+    bool latitude_previous_explicit = false;
+    UInt8 latitude_explicit_previous[31] = {};
     UInt32 latitude_recoveries = 0;
     UInt64 latitude_ptp_frames = 0;
     bool latitude_legacy_seen = false;''')

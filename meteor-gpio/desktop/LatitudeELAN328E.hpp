@@ -34,6 +34,19 @@ static bool latitudeDecodeELAN(const unsigned char *b, unsigned length, Latitude
 }
 static bool latitudeELANShouldRecover(bool awake, bool ready, unsigned long long frames,
     bool legacy, unsigned long long idle, unsigned attempts) {
-    return awake && ready && frames && legacy && idle >= 1024 && attempts < 3;
+    (void)legacy; // A valid legacy companion packet is not required for a stall.
+    return awake && ready && frames && idle >= 1024 && attempts < 3;
+}
+static bool latitudeELANInputCommand(unsigned char *b, unsigned command, unsigned data) {
+    if (!b || command > 65535 || data > 65535) return false;
+    b[0]=command; b[1]=command>>8;
+    b[2]=0x1f; b[3]=0x02; b[4]=0x54; // INPUT GET_REPORT, extended ID84.
+    b[5]=data; b[6]=data>>8;
+    return true;
+}
+static bool latitudeELANWireFrame(const unsigned char *b, unsigned n) {
+    if (!b || n != 31 || b[0] != 31 || b[1] != 0) return false;
+    LatitudeELANFrame f;
+    return latitudeDecodeELAN(b+2,29,f);
 }
 #endif
