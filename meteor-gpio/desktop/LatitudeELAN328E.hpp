@@ -32,4 +32,8 @@ static bool latitudeDecodeELAN(const unsigned char *b, unsigned length, Latitude
     }
     return true;
 }
+static bool latitudeELANShouldRecover(bool awake, bool ready, unsigned long long frames,
+    bool legacy, unsigned long long idle, unsigned attempts) {
+    return awake && ready && frames && legacy && idle >= 1024 && attempts < 3;
+}
 #endif

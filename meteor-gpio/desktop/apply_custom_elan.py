@@ -32,6 +32,13 @@ int main() {
     b[0]=1; assert(!latitudeDecodeELAN(b,29,f));
     assert(!latitudeDecodeELAN(b,28,f));
     assert(!latitudeDecodeELAN(nullptr,29,f));
+    assert(latitudeELANShouldRecover(true,true,35,true,1024,0));
+    assert(!latitudeELANShouldRecover(true,true,0,true,1024,0));
+    assert(!latitudeELANShouldRecover(true,true,35,false,1024,0));
+    assert(!latitudeELANShouldRecover(true,true,35,true,1023,0));
+    assert(!latitudeELANShouldRecover(true,true,35,true,1024,3));
+    assert(!latitudeELANShouldRecover(false,true,35,true,1024,0));
+    assert(!latitudeELANShouldRecover(true,false,35,true,1024,0));
 }
 '''
     with tempfile.TemporaryDirectory() as folder:
@@ -118,3 +125,74 @@ int main() {
 ''')
     p.write_text(s)
     (out/'custom-ELAN-decoder.hpp').write_bytes(header.read_bytes())
+    p=hid/'VoodooI2CHID/VoodooI2CHIDDevice.hpp'
+    s=p.read_text().replace('    UInt64 latitude_reads = 0;', '''    UInt64 latitude_reads = 0;
+    UInt64 latitude_ptp_idle_reads = 0;
+    UInt32 latitude_recoveries = 0;
+    UInt64 latitude_ptp_frames = 0;
+    bool latitude_legacy_seen = false;''')
+    p.write_text(s)
+    p=hid/'VoodooI2CHID/VoodooI2CHIDDevice.cpp';s=p.read_text()
+    s=s.replace('#include "VoodooI2CHIDDevice.hpp"', '#include "VoodooI2CHIDDevice.hpp"\n#include "LatitudeELAN328E.hpp"')
+    needle='''    if (latitude_elan) {
+        ++latitude_reads;'''
+    assert s.count(needle)==1
+    s=s.replace(needle,'''    if (latitude_elan) {
+        if (ready_for_input) {
+            if (return_size == 31 && report[2] == 0x54) {
+                ++latitude_ptp_frames;
+                latitude_ptp_idle_reads = 0;
+                latitude_legacy_seen = false;
+            } else {
+                ++latitude_ptp_idle_reads;
+                if (return_size >= 3 && return_size <= hid_descriptor.wMaxInputLength && report[2] == 1)
+                    latitude_legacy_seen = true;
+            }
+        }
+        ++latitude_reads;''')
+    needle='''        if (awake)
+            VoodooI2CHIDDevice::getInputReport();
+        if (interrupt_simulator)
+            interrupt_simulator->setTimeoutMS(4);'''
+    assert s.count(needle)==1
+    s=s.replace(needle,'''        if (awake)
+            VoodooI2CHIDDevice::getInputReport();
+        // Recover only after real PTP traffic, a legacy mouse packet and a
+        // long drought of PTP frames. At most three attempts per load, with
+        // at least 1024 polling intervals between attempts. No hardware reset.
+        if (latitudeELANShouldRecover(awake, ready_for_input, latitude_ptp_frames,
+                latitude_legacy_seen, latitude_ptp_idle_reads, latitude_recoveries)) {
+            ++latitude_recoveries;
+            latitude_ptp_idle_reads = 0;
+            setProperty("LatitudeELANModeRecoveryAttempts", latitude_recoveries, 32);
+            IOBufferMemoryDescriptor *mode = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task, 0, 3);
+            if (mode) {
+                const UInt8 enable[] = {0x03,0x03,0x00};
+                mode->writeBytes(0, enable, 3);
+                // Direct transport GET_REPORT here avoids IOHID element locks
+                // and startup matching. Record hardware bytes, not cached mode.
+                IOReturn status = getReport(mode, kIOHIDReportTypeFeature, 3);
+                UInt8 actual[3] = {};
+                mode->readBytes(0, actual, 3);
+                if (status != kIOReturnSuccess) bzero(actual, 3);
+                setProperty("LatitudeELANModeBeforeStatus", (UInt32)status, 32);
+                setProperty("LatitudeELANModeBeforeBytes", actual, 3);
+                mode->writeBytes(0, enable, 3);
+                status = setReport(mode, kIOHIDReportTypeFeature, 3);
+                setProperty("LatitudeELANModeWriteStatus", (UInt32)status, 32);
+                const UInt8 surface[] = {0x05,0x03,0x00};
+                mode->writeBytes(0, surface, 3);
+                status = setReport(mode, kIOHIDReportTypeFeature, 5);
+                setProperty("LatitudeELANSurfaceRecoveryStatus", (UInt32)status, 32);
+                mode->writeBytes(0, enable, 3);
+                status = getReport(mode, kIOHIDReportTypeFeature, 3);
+                mode->readBytes(0, actual, 3);
+                if (status != kIOReturnSuccess) bzero(actual, 3);
+                setProperty("LatitudeELANModeAfterStatus", (UInt32)status, 32);
+                setProperty("LatitudeELANModeAfterBytes", actual, 3);
+                mode->release();
+            }
+        }
+        if (interrupt_simulator)
+            interrupt_simulator->setTimeoutMS(4);''')
+    p.write_text(s)
