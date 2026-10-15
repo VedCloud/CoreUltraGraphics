@@ -49,4 +49,13 @@ static bool latitudeELANWireFrame(const unsigned char *b, unsigned n) {
     LatitudeELANFrame f;
     return latitudeDecodeELAN(b+2,29,f);
 }
+static bool latitudeELANFeatureCommand(unsigned char *b, unsigned command, unsigned data, unsigned id) {
+    if (!b || command>65535 || data>65535 || id>14) return false;
+    b[0]=command;b[1]=command>>8;b[2]=0x30|id;b[3]=2;b[4]=data;b[5]=data>>8;
+    return true;
+}
+static bool latitudeELANFeatureReply(const unsigned char *b, unsigned n, unsigned id, unsigned payload) {
+    return b && payload>=1 && payload<=257 && n==payload+2 &&
+        (unsigned(b[0])|(unsigned(b[1])<<8))==n && b[2]==id;
+}
 #endif

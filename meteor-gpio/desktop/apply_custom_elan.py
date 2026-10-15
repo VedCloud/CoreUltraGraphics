@@ -52,6 +52,17 @@ int main() {
     wire[1]=0; wire[2]=1; assert(!latitudeELANWireFrame(wire,31));
     assert(!latitudeELANWireFrame(wire,30));
     assert(!latitudeELANWireFrame(nullptr,31));
+    unsigned char fcmd[6];
+    assert(latitudeELANFeatureCommand(fcmd,0x1234,0x5678,6));
+    const unsigned char fexpected[]={0x34,0x12,0x36,2,0x78,0x56};
+    for(unsigned i=0;i<6;i++) assert(fcmd[i]==fexpected[i]);
+    assert(!latitudeELANFeatureCommand(fcmd,0,0,15));
+    unsigned char cert[259]={3,1,6};
+    assert(latitudeELANFeatureReply(cert,259,6,257));
+    assert(!latitudeELANFeatureReply(cert,258,6,257));
+    cert[2]=7;assert(!latitudeELANFeatureReply(cert,259,6,257));
+    cert[2]=6;cert[0]=0;assert(!latitudeELANFeatureReply(cert,259,6,257));
+    assert(!latitudeELANFeatureReply(nullptr,259,6,257));
 }
 '''
     with tempfile.TemporaryDirectory() as folder:
