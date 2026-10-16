@@ -92,7 +92,7 @@ void CoreUltraGraphicsDriver::publishIdentification(const char *prefix, UInt32 r
 void CoreUltraGraphicsDriver::readIdentification()
 {
     // No caller-selected offsets, MMIO stores, forcewake, reset, or DMA.
-    setProperty("ProbeMMIOReadCount", 0, 32);
+    setProperty("ProbeMMIOReadCount", static_cast<UInt64>(0), 32);
     setProperty("ProbeMMIOMappingActive", false);
     setProperty("ProbeMMIOWritesPerformed", false);
     setProperty("ProbeForcewakeRequested", false);
