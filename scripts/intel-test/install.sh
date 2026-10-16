@@ -147,8 +147,8 @@ for k in NMXGPU NMXAccel; do grep -Fq "com.nullmoth.$k" "$S/kmutil-inspect.log" 
 mkdir -p "$LOCAL"
 chmod 700 "$LOCAL"
 printf 'backing-up\n' > "$LOCAL/phase"
-printf 'CoreUltraIntelTest-v1\n' > "$LOCAL/magic"
 printf '%s\n' "$DATA_UUID" > "$LOCAL/data-uuid"
+printf 'CoreUltraIntelTest-v1\n' > "$LOCAL/magic"
 KC=/Library/KernelCollections/AuxiliaryKernelExtensions.kc
 mkdir -p /Library/KernelCollections
 if [ -f "$KC" ]; then
