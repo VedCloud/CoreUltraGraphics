@@ -46,6 +46,9 @@ USB_UUID=$(cug_get "$WORK/usb.plist" VolumeUUID)
 diskutil info -plist /System/Volumes/Data > "$WORK/data.plist"
 DATA_UUID=$(cug_get "$WORK/data.plist" VolumeUUID)
 [ -n "$USB_UUID" ] && [ -n "$DATA_UUID" ] || cug_die 'Volume identity unavailable.'
+DATA_FREE=$(df -Pk /System/Volumes/Data | awk 'NR==2 {print $4}')
+USB_FREE=$(df -Pk "$USB" | awk 'NR==2 {print $4}')
+[ "$DATA_FREE" -ge 4194304 ] && [ "$USB_FREE" -ge 131072 ] || cug_die 'Need 4 GiB free on macOS Data and 128 MiB on the USB for staging and rollback.'
 ioreg -r -n GFX0 -l -w 0 > "$WORK/gfx.txt"
 grep -q '"vendor-id" = <86800000>' "$WORK/gfx.txt" && grep -q '"device-id" = <457d0000>' "$WORK/gfx.txt" \
     || cug_die 'Expected Intel 8086:7D45 GPU was not found.'
@@ -143,6 +146,7 @@ kmutil inspect -a x86_64 -A "$WORK/test.kc" > "$S/kmutil-inspect.log"
 for k in NMXGPU NMXAccel; do grep -Fq "com.nullmoth.$k" "$S/kmutil-inspect.log" || cug_die "Kernel collection omitted $k."; done
 mkdir -p "$LOCAL"
 chmod 700 "$LOCAL"
+printf 'backing-up\n' > "$LOCAL/phase"
 printf 'CoreUltraIntelTest-v1\n' > "$LOCAL/magic"
 printf '%s\n' "$DATA_UUID" > "$LOCAL/data-uuid"
 KC=/Library/KernelCollections/AuxiliaryKernelExtensions.kc

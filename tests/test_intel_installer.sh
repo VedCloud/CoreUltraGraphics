@@ -12,6 +12,12 @@ if cug_require_fresh_targets "$T/fresh" 2>/dev/null; then echo 'FAIL: accepted a
 printf 'existing-collection\n' > "$T/state/original-aux.kc"
 cug_sha "$T/state/original-aux.kc" > "$T/state/original-aux.sha256"
 printf 'CoreUltraIntelTest-v1\n' > "$T/state/magic"
+printf 'backing-up\n' > "$T/state/phase"
+# An interrupted backup must not remove any payload paths or need a complete KC.
+mv "$T/state/original-aux.kc" "$T/held-aux.kc"
+cug_restore_system "$T/fresh" "$T/state"
+[ -d "$T/fresh/Library/Extensions/NMXGPU.kext" ]
+mv "$T/held-aux.kc" "$T/state/original-aux.kc"
 printf 'installing\n' > "$T/state/phase"
 mkdir -p "$T/fresh/Library/KernelCollections" "$T/fresh/Library/Extensions/Unrelated.kext"
 printf 'keep\n' > "$T/fresh/Library/Extensions/Unrelated.kext/keep"

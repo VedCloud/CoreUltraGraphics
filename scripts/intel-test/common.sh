@@ -33,6 +33,7 @@ cug_restore_system() {
     [ "$(/bin/cat "$state/magic")" = CoreUltraIntelTest-v1 ] || return 1
     case "$(/bin/cat "$state/phase")" in
         restored) return 0;;
+        backing-up) printf 'restored\n' > "$state/phase"; return 0;;
         installing|active) ;;
         *) return 1;;
     esac
