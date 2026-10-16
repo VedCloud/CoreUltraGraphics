@@ -25,6 +25,61 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  firmware-inspection:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install pinned firmware inspection tools in runner workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-results
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libfontconfig1-dev libfreetype6-dev libbz2-dev liblzma-dev pkg-config
+          cargo install binwalk --version 3.1.0 --locked --root "$RUNNER_TEMP/binwalk"
+          npm install --prefix "$RUNNER_TEMP/rea" --ignore-scripts --no-audit --no-fund rea-agents@6.5.0
+          cp "$RUNNER_TEMP/rea/package-lock.json" ci-results/rea-package-lock.json
+          {
+            uname -a
+            node --version
+            "$RUNNER_TEMP/rea/node_modules/.bin/rea" --version
+            "$RUNNER_TEMP/binwalk/bin/binwalk" --version
+            command -v ps
+            command -v prlimit
+          } 2>&1 | tee ci-results/inspection-environment.txt
+      - name: Fetch matching unmodified firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 research/tools/fetch_mtl_firmware.py 2>&1 | tee ci-results/firmware-fetch.txt
+          cp research/firmware/38c1a7096dfb/manifest.json ci-results/firmware-manifest.json
+          cp research/firmware/38c1a7096dfb/LICENSE.i915 ci-results/LICENSE.i915
+      - name: Inspect firmware through REA and preserve complete evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          export REA_BINWALK_COMMAND="$RUNNER_TEMP/binwalk/bin/binwalk"
+          for image in mtl_guc_70.bin mtl_huc_gsc.bin mtl_gsc_1.bin; do
+            "$RUNNER_TEMP/rea/node_modules/.bin/rea" inspect-firmware-regions \
+              "$PWD/research/firmware/38c1a7096dfb/$image" --json \
+              > "ci-results/$image.rea.json" 2> "ci-results/$image.rea.stderr.txt"
+          done
+          echo 'REA signature inspection completed; this is not instruction decompilation.'
+      - name: Retain firmware inspection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MTL-firmware-REA-${{ github.sha }}
+          path: ci-results/
+          if-no-files-found: error
+          retention-days: 14
   build:
     runs-on: macos-15
     timeout-minutes: 20

@@ -55,3 +55,12 @@ python3 verify_kext.py CoreUltraGraphics.kext
 Next hardware milestone: owned GPU memory mappings, interrupt/reset handling,
 firmware validation/load/authentication and a bounded GuC transport handshake.
 Command execution and native macOS graphics integration remain additional work.
+
+## Linux REA inspection
+
+On branch pushes, an additional Ubuntu job installs Binwalk 3.1.0 and REA 6.5.0
+in the disposable runner, then invokes REA's real firmware-signature inspector
+on the three matching GuC/HuC/GSC images. It retains complete evidence, stderr,
+tool versions, a dependency lock, and firmware hashes in a separate artifact.
+This is signature/region inspection, not firmware instruction decompilation or
+hardware execution. It does not change the user's Codex configuration.
