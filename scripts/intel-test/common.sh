@@ -1,7 +1,11 @@
 #!/bin/bash
 # Shared transaction operations; no automatic action when sourced.
 cug_die() { printf 'STOP: %s\n' "$*" >&2; return 1; }
-cug_sha() { /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'; }
+cug_sha() {
+    if [ -x /usr/bin/shasum ]; then /usr/bin/shasum -a 256 "$1" | /usr/bin/awk '{print $1}'
+    elif [ -x /usr/bin/openssl ]; then /usr/bin/openssl dgst -sha256 "$1" | /usr/bin/awk '{print $NF}'
+    else cug_die 'No SHA256 utility available.'; fi
+}
 cug_get() { /usr/libexec/PlistBuddy -c "Print :$2" "$1"; }
 cug_verify_kit() { (cd "$1" && /usr/bin/shasum -a 256 -c SHA256SUMS --quiet); }
 cug_atomic_copy() {

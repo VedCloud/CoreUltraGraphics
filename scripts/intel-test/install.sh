@@ -15,12 +15,16 @@ case "${1:-}" in ''|--check) ;; *) echo 'Usage: install.sh [--check]'; exit 1;; 
 mkdir /var/run/CoreUltraIntelTest.lock 2>/dev/null || { echo 'Another test operation is active.'; exit 1; }
 WORK=$(mktemp -d /private/var/tmp/CoreUltraIntelTest.XXXXXX)
 COMMITTING=0
+VERIFY_PID=''
+WATCH_PID=''
 LOCAL=/Library/NullMoth/CoreUltraIntelTest
 S="$KIT/.state"
 CFG="$USB/EFI/OC/config.plist"
 cleanup() {
     local result=$?
     trap - EXIT
+    [ -z "$WATCH_PID" ] || kill "$WATCH_PID" 2>/dev/null || true
+    [ -z "$VERIFY_PID" ] || kill -TERM "$VERIFY_PID" 2>/dev/null || true
     if [ "$COMMITTING" = 1 ]; then
         echo 'Installation failed; restoring the recorded system state and USB configuration.'
         if cug_restore_system '' "$LOCAL" && cug_atomic_copy "$S/workingEFI/OC/config.plist" "$CFG"; then
@@ -104,8 +108,10 @@ if [ "$PHASE" = active ]; then
     WATCH_PID=$!
     VERIFY_RESULT=0
     wait "$VERIFY_PID" || VERIFY_RESULT=$?
+    VERIFY_PID=''
     kill "$WATCH_PID" 2>/dev/null || true
     wait "$WATCH_PID" 2>/dev/null || true
+    WATCH_PID=''
     [ "$VERIFY_RESULT" = 0 ] || {
         cat "$OUT/metal-execution.txt"; echo "Hardware test did not pass (exit $VERIFY_RESULT). Results: $OUT"; exit 1;
     }

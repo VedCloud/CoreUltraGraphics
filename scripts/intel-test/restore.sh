@@ -28,11 +28,15 @@ LOCAL="$ROOT/Library/NullMoth/CoreUltraIntelTest"
 S="$KIT/.state"
 [ -f "$S/workingEFI/OC/config.plist" ] || cug_die 'USB working EFI backup is missing.'
 [ "$(cug_sha "$S/workingEFI/OC/config.plist")" = "$(cat "$KIT/original-config.sha256")" ] || cug_die 'Backup checksum mismatch.'
+WORK=$(mktemp -d /private/var/tmp/CoreUltraRestore.XXXXXX)
+if [ -z "$ROOT" ]; then diskutil info -plist /System/Volumes/Data > "$WORK/data.plist"
+else diskutil info -plist "$ROOT" > "$WORK/data.plist"; fi
+[ "$(cug_get "$WORK/data.plist" VolumeUUID)" = "$(cat "$S/data-uuid")" ] || cug_die 'Wrong macOS Data volume.'
+if [ "$(cat "$S/phase")" = active ]; then
+    [ -f "$LOCAL/magic" ] || cug_die 'Active system transaction is missing; automatic removal cannot be verified.'
+fi
 if [ -f "$LOCAL/magic" ]; then
-    WORK=$(mktemp -d /private/var/tmp/CoreUltraRestore.XXXXXX)
     [ ! -L "$LOCAL" ] && [ "$(stat -f '%u' "$LOCAL")" = 0 ] || cug_die 'Untrusted local transaction directory.'
-    if [ -z "$ROOT" ]; then diskutil info -plist /System/Volumes/Data > "$WORK/data.plist"
-    else diskutil info -plist "$ROOT" > "$WORK/data.plist"; fi
     [ "$(cug_get "$WORK/data.plist" VolumeUUID)" = "$(cat "$LOCAL/data-uuid")" ] || cug_die 'Wrong macOS Data volume.'
     cug_restore_system "$ROOT" "$LOCAL"
 fi
