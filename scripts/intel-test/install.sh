@@ -74,6 +74,8 @@ if [ "$PHASE" = new ] || [ "$PHASE" = restored ]; then
         ditto "$USB/EFI" "$S/workingEFI"
         [ "$(cug_sha "$S/workingEFI/OC/config.plist")" = "$(cat "$KIT/original-config.sha256")" ] || cug_die 'EFI backup failed.'
     fi
+    (cd "$USB/EFI" && find . -type f -exec shasum -a 256 {} \;) > "$S/workingEFI.sha256"
+    (cd "$S/workingEFI" && shasum -a 256 -c "$S/workingEFI.sha256" --quiet) || cug_die 'Full EFI backup did not verify.'
     printf '%s\n' "$USB_UUID" > "$S/usb-uuid"
     printf '%s\n' "$DATA_UUID" > "$S/data-uuid"
     ditto "$KIT/support/AMFIPass.kext" "$USB/EFI/OC/Kexts/AMFIPass.kext"
@@ -96,8 +98,16 @@ if [ "$PHASE" = active ]; then
     ioreg -l -r -c NMXAccel -w 0 > "$OUT/nmxaccel.txt"
     kmutil showloaded > "$OUT/loaded-kexts.txt" 2>&1
     /bin/bash "$KIT/collect-runtime.sh" "$OUT"
-    "$WORK/verify-metal" > "$OUT/metal-execution.txt" 2>&1 || {
-        cat "$OUT/metal-execution.txt"; echo "Hardware test did not pass. Results: $OUT"; exit 1;
+    "$WORK/verify-metal" > "$OUT/metal-execution.txt" 2>&1 &
+    VERIFY_PID=$!
+    (sleep 120; kill -TERM "$VERIFY_PID" 2>/dev/null || true) &
+    WATCH_PID=$!
+    VERIFY_RESULT=0
+    wait "$VERIFY_PID" || VERIFY_RESULT=$?
+    kill "$WATCH_PID" 2>/dev/null || true
+    wait "$WATCH_PID" 2>/dev/null || true
+    [ "$VERIFY_RESULT" = 0 ] || {
+        cat "$OUT/metal-execution.txt"; echo "Hardware test did not pass (exit $VERIFY_RESULT). Results: $OUT"; exit 1;
     }
     cat "$OUT/metal-execution.txt"
     echo "Results: $OUT"
@@ -139,6 +149,7 @@ else
 fi
 ditto "$S/workingEFI" "$LOCAL/workingEFI"
 cp "$KIT/original-config.sha256" "$LOCAL/original-config.sha256"
+printf 'installing\n' > "$LOCAL/phase"
 COMMITTING=1
 while IFS= read -r item; do
     mkdir -p "$(dirname "/$item")"

@@ -27,6 +27,11 @@ cug_require_fresh_targets() {
 cug_restore_system() {
     local root=$1 state=$2 item live
     [ "$(/bin/cat "$state/magic")" = CoreUltraIntelTest-v1 ] || return 1
+    case "$(/bin/cat "$state/phase")" in
+        restored) return 0;;
+        installing|active) ;;
+        *) return 1;;
+    esac
     if [ -f "$state/original-aux.kc" ]; then
         [ "$(cug_sha "$state/original-aux.kc")" = "$(/bin/cat "$state/original-aux.sha256")" ] || return 1
     elif [ ! -f "$state/no-original-aux" ]; then

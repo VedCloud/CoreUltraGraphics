@@ -7,6 +7,13 @@ KIT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 USB=$(CDPATH= cd -- "$KIT/.." && pwd -P)
 . "$KIT/common.sh"
 [ "$(uname -s)" = Darwin ] && [ "$(id -u)" = 0 ] || { echo 'Run as root from macOS or Recovery.'; exit 1; }
+mkdir /var/run/CoreUltraIntelTest.lock 2>/dev/null || cug_die 'Another test operation is active.'
+WORK=''
+cleanup() {
+    case "$WORK" in /private/var/tmp/CoreUltraRestore.*) rm -rf -- "$WORK";; esac
+    rmdir /var/run/CoreUltraIntelTest.lock 2>/dev/null || true
+}
+trap cleanup EXIT
 ROOT=''
 case "${1:-}" in
     '') ;;
@@ -23,7 +30,7 @@ S="$KIT/.state"
 [ "$(cug_sha "$S/workingEFI/OC/config.plist")" = "$(cat "$KIT/original-config.sha256")" ] || cug_die 'Backup checksum mismatch.'
 if [ -f "$LOCAL/magic" ]; then
     WORK=$(mktemp -d /private/var/tmp/CoreUltraRestore.XXXXXX)
-    trap 'case "$WORK" in /private/var/tmp/CoreUltraRestore.*) rm -rf -- "$WORK";; esac' EXIT
+    [ ! -L "$LOCAL" ] && [ "$(stat -f '%u' "$LOCAL")" = 0 ] || cug_die 'Untrusted local transaction directory.'
     if [ -z "$ROOT" ]; then diskutil info -plist /System/Volumes/Data > "$WORK/data.plist"
     else diskutil info -plist "$ROOT" > "$WORK/data.plist"; fi
     [ "$(cug_get "$WORK/data.plist" VolumeUUID)" = "$(cat "$LOCAL/data-uuid")" ] || cug_die 'Wrong macOS Data volume.'

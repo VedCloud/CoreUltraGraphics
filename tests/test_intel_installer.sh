@@ -12,6 +12,7 @@ if cug_require_fresh_targets "$T/fresh" 2>/dev/null; then echo 'FAIL: accepted a
 printf 'existing-collection\n' > "$T/state/original-aux.kc"
 cug_sha "$T/state/original-aux.kc" > "$T/state/original-aux.sha256"
 printf 'CoreUltraIntelTest-v1\n' > "$T/state/magic"
+printf 'installing\n' > "$T/state/phase"
 mkdir -p "$T/fresh/Library/KernelCollections" "$T/fresh/Library/Extensions/Unrelated.kext"
 printf 'keep\n' > "$T/fresh/Library/Extensions/Unrelated.kext/keep"
 cp "$T/state/original-aux.kc" "$T/saved"
