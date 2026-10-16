@@ -1,6 +1,6 @@
 KEXT      = CoreUltraGraphics.kext
 TARGET    = build/CoreUltraGraphics
-OBJS      = build/CoreUltraGraphicsDriver.o build/XeTranslationPipeline.o
+OBJS      = build/CoreUltraGraphicsDriver.o
 KMODINFO  = build/kmod_info.o
 SDK       ?= $(shell xcrun --sdk macosx --show-sdk-path 2>/dev/null)
 CXX       = $(shell xcrun -f clang++)

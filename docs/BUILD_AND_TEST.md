@@ -17,9 +17,12 @@ binary hash, firmware provenance manifest and retained firmware license.
 Failed runs preserve available diagnostic logs and do not create a success ZIP.
 The referenced firmware is downloaded for offline tests, not embedded in the kext.
 
-The driver matches 8086:7D45 and publishes
+The 0.2.0 driver matches 8086:7D45 and publishes
 `CoreUltraGraphicsAccelerationSupported = false`. Its runtime behavior is PCI
-memory-decode enablement and diagnostic register reads. Building and inspecting
+identity/configuration reads and inspection of existing IOKit resource descriptors.
+It does not enable memory decode, map GPU memory, access MMIO or allocate DMA.
+The separate match category allows a diagnostic service alongside other categories.
+Building and inspecting
 it in Actions is not a load/boot test. The workflow does not modify an EFI,
 load a kext, upload firmware to hardware or claim GPU acceleration.
 
