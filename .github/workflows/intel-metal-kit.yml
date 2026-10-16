@@ -1,0 +1,36 @@
+name: Intel Metal test kit validation
+on:
+  push:
+    branches: [graphics-firmware-build]
+    paths: ['scripts/intel-test/**', 'tools/verify_intel_metal.m', 'tests/test_intel_installer.sh', '.github/workflows/intel-metal-kit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate transaction and rollback helpers
+        run: bash tests/test_intel_installer.sh
+      - name: Build actual Intel Metal execution checker
+        run: |
+          mkdir -p intel-kit
+          xcrun clang -arch x86_64 -mmacosx-version-min=15.0 -fobjc-arc -Wall -Wextra -Werror \
+            -framework Foundation -framework Metal -framework IOKit tools/verify_intel_metal.m -o intel-kit/verify-metal
+          codesign --force --sign - intel-kit/verify-metal
+          xcrun clang -mmacosx-version-min=15.0 -fobjc-arc -Wall -Wextra -Werror \
+            -framework Foundation -framework Metal -framework IOKit tools/verify_intel_metal.m -o /tmp/cug-check-csr
+          /tmp/cug-check-csr --check-csr > intel-kit/csr-api-check.txt || test "$?" = 2
+          grep -q 'Running CSR configuration:' intel-kit/csr-api-check.txt
+          file intel-kit/verify-metal
+          shasum -a 256 intel-kit/verify-metal
+          git rev-parse HEAD > intel-kit/source-commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Intel-Metal-checker-${{ github.sha }}
+          path: intel-kit/
+          retention-days: 14
