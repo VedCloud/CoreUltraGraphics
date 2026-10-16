@@ -130,7 +130,9 @@ jobs:
             ci-results/test-mi-batch
             clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined tests/test_guc_protocol.c -o ci-results/test-guc-protocol
             ci-results/test-guc-protocol
-            echo 'Both C tests passed with AddressSanitizer and UndefinedBehaviorSanitizer.'
+            clang -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined tests/test_mmio_probe.c -o ci-results/test-mmio-probe
+            ci-results/test-mmio-probe
+            echo 'All three C tests passed with AddressSanitizer and UndefinedBehaviorSanitizer.'
           } 2>&1 | tee ci-results/protocol-tests.txt
       - name: Build graphics diagnostic kext
         shell: bash

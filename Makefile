@@ -35,7 +35,7 @@ preflight:
 
 $(OBJS) $(KMODINFO): | preflight
 
-build/%.o: %.cpp CoreUltraGraphicsDriver.h XeTranslationPipeline.h port/guc_protocol.h
+build/%.o: %.cpp CoreUltraGraphicsDriver.h port/mmio_probe_policy.h
 	mkdir -p build
 	$(CXX) $(CXXFLAGS) $(INC) -c $< -o $@
 

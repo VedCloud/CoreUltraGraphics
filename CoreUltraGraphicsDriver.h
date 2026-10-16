@@ -3,13 +3,15 @@
 #include <IOKit/IOService.h>
 #include <IOKit/pci/IOPCIDevice.h>
 
-// Metadata-only attachment milestone for the measured 8086:7D45 target.
+// One-shot read-only GMD identification milestone for measured 8086:7D45.
 class CoreUltraGraphicsDriver : public IOService
 {
     OSDeclareDefaultStructors(CoreUltraGraphicsDriver);
 private:
     IOPCIDevice *pciDevice;
     void releaseResources();
+    void readIdentification();
+    void publishIdentification(const char *prefix, UInt32 raw);
 public:
     bool init(OSDictionary *dict = nullptr) override;
     void free() override;

@@ -17,10 +17,12 @@ binary hash, firmware provenance manifest and retained firmware license.
 Failed runs preserve available diagnostic logs and do not create a success ZIP.
 The referenced firmware is downloaded for offline tests, not embedded in the kext.
 
-The 0.2.0 driver matches 8086:7D45 and publishes
-`CoreUltraGraphicsAccelerationSupported = false`. Its runtime behavior is PCI
-identity/configuration reads and inspection of existing IOKit resource descriptors.
-It does not enable memory decode, map GPU memory, access MMIO or allocate DMA.
+The 0.3.0 driver matches 8086:7D45 and publishes
+`CoreUltraGraphicsAccelerationSupported = false`. It inspects PCI configuration
+and existing resource descriptors, then attempts two allowlisted identification
+reads using a temporary uncached, read-only BAR0 mapping. It checks PCI D0,
+memory decode, resource identity and bounds before reading. It never enables
+decode, writes MMIO, requests forcewake or allocates DMA. See [MMIO scope](MMIO_PROBE.md).
 The separate match category allows a diagnostic service alongside other categories.
 Building and inspecting
 it in Actions is not a load/boot test. The workflow does not modify an EFI,
@@ -51,11 +53,14 @@ clang -std=c11 -Wall -Wextra -Werror tests/test_c_batch.c -o /tmp/cug-mi-test
 /tmp/cug-mi-test
 clang -std=c11 -Wall -Wextra -Werror tests/test_guc_protocol.c -o /tmp/cug-guc-test
 /tmp/cug-guc-test
+clang -std=c11 -Wall -Wextra -Werror tests/test_mmio_probe.c -o /tmp/cug-mmio-test
+/tmp/cug-mmio-test
 make KERNEL_SDK=/absolute/path/to/MacKernelSDK
 python3 verify_kext.py CoreUltraGraphics.kext
 ```
 
-Next hardware milestone: owned GPU memory mappings, interrupt/reset handling,
+Next hardware milestone: verify the returned GMD identification values. Later:
+owned GPU memory mappings, interrupt/reset handling,
 firmware validation/load/authentication and a bounded GuC transport handshake.
 Command execution and native macOS graphics integration remain additional work.
 
