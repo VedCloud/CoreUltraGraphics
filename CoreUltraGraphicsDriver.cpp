@@ -1,4 +1,5 @@
 #include "CoreUltraGraphicsDriver.h"
+#include "port/guc_protocol.h"
 
 #define super IOService
 OSDefineMetaClassAndStructors(CoreUltraGraphicsDriver, IOService);
@@ -45,6 +46,10 @@ void CoreUltraGraphicsDriver::free()
 
 IOService *CoreUltraGraphicsDriver::probe(IOService *provider, SInt32 *score)
 {
+    IOPCIDevice *device = OSDynamicCast(IOPCIDevice, provider);
+    if (!device || device->configRead16(kIOPCIConfigVendorID) != 0x8086 ||
+        device->configRead16(kIOPCIConfigDeviceID) != 0x7D45)
+        return nullptr;
     return super::probe(provider, score);
 }
 
@@ -84,8 +89,10 @@ bool CoreUltraGraphicsDriver::start(IOService *provider)
     if (!super::start(provider)) return false;
 
     pciDevice = OSDynamicCast(IOPCIDevice, provider);
-    if (!pciDevice) {
-        IOLog("CoreUltraGraphics: provider is not an IOPCIDevice\n");
+    if (!pciDevice || pciDevice->configRead16(kIOPCIConfigVendorID) != 0x8086 ||
+        pciDevice->configRead16(kIOPCIConfigDeviceID) != 0x7D45) {
+        pciDevice = nullptr;
+        IOLog("CoreUltraGraphics: provider does not match Intel 8086:7D45\n");
         return false;
     }
     pciDevice->retain();
@@ -113,6 +120,9 @@ bool CoreUltraGraphicsDriver::start(IOService *provider)
     }
 
     dumpDisplayState();
+
+    setProperty("CoreUltraGraphicsAccelerationSupported", false);
+    setProperty("CoreUltraGraphicsDriverMode", "PCI/display diagnostics; GuC transport not initialized");
 
     registerService();
     return true;

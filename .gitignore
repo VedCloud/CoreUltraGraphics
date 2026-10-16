@@ -1,0 +1,7 @@
+.deps/
+build/
+*.kext/
+ci-results/
+__pycache__/
+*.pyc
+research/firmware/
