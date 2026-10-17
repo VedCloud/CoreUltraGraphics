@@ -1,0 +1,15 @@
+name: Intel boot recorder shell validation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  shell-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: |
+          bash -n research/intel-port/tools/boot-recorder.sh
+          bash -n research/intel-port/tools/install-boot-recorder.sh
