@@ -35,7 +35,7 @@ sources += list((port/'bsdcompat/src').glob('*.c'))
 sources += [archive/'upstream/kpi/freebsd-src/sys/contrib/ck/src/ck_epoch.c']
 sources += [p for p in (port/'xnu').glob('*.cpp') if p.name not in ('nmx_npu_kext.cpp','nmx_kext.cpp')]
 sources += [root/'port/nullmoth-candidate'/f for f in ('nmx_kext.cpp','nmx_fb_bridge.c','nmx_i915_bridge.c')]
-sources = [root/'port/nullmoth-candidate'/p.name if p.name in ('nmx_misc.c','nmx_platform.cpp') else p for p in sources]
+sources = [root/'port/nullmoth-candidate'/p.name if p.name in ('nmx_misc.c','nmx_platform.cpp','nmx_port.c') else p for p in sources]
 sources=list(dict.fromkeys(sources))
 
 def build(path):

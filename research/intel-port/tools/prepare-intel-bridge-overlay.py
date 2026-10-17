@@ -127,7 +127,33 @@ source = replace(source, '    nmx_marker_write(true);\n    dev_ = nmx_port_attac
     dev_ = nmx_port_attach(pci_);
     IOLog("NullMoth GPU: stage PCI driver attachment returned %s\\n",
           dev_ ? "device" : "null");''')
+# Identify the loaded image before port startup, bypassing IOLog's os_log path.
+source = replace(source, '#include <kern/thread.h>', '#include <kern/thread.h>\n#include <i386/machine_routines.h>\n#include <libkern/libkern.h>')
+source = replace(source, 'bool NMXGPU::start(IOService *provider)\n{', '''bool NMXGPU::start(IOService *provider)
+{
+    printf("CUG-HANDOFF-20261017-B1: start entered IF=%d\\n", ml_get_interrupts_enabled());''')
+source = replace(source, '        int err = nmx_port_start();', '''        printf("CUG-B1: before port-start IF=%d\\n", ml_get_interrupts_enabled());
+        int err = nmx_port_start();
+        printf("CUG-B1: after port-start error=%d IF=%d\\n", err, ml_get_interrupts_enabled());''')
+begin = source.index('    /* Yield briefly to observe entry')
+end = source.index('    return true;\n}', begin)
+source = source[:begin] + '''    /* Never wait for the worker while IOKit is still inside start(). */
+    printf("CUG-B1: start returning checkpoint=%u IF=%d\\n",
+           __atomic_load_n(&attach_thread_stage_, __ATOMIC_ACQUIRE),
+           ml_get_interrupts_enabled());
+''' + source[end:]
+source = source.replace('IOLog(', 'printf(')
 files.append(('xnu/nmx_kext.cpp', original, source))
+
+# Expose each boundary inside the formerly silent synchronous port startup.
+original = (up/'bsdcompat/src/nmx_port.c').read_text()
+begin = original.index('#define STEP(call)')
+end = original.index('    stage = 0;', begin)
+source = original[:begin] + '''#define STEP(call) do { printf("CUG-B1: port entering %s\\n", #call); \\
+    err = (call); printf("CUG-B1: port returned %s error=%d\\n", #call, err); \\
+    if (err != 0) { nmx_port_stop(); return err; } stage++; } while (0)
+''' + original[end:]
+files.append(('bsdcompat/src/nmx_port.c', original, source))
 
 # Match the pinned kernel SDK's strnstr prototype without changing its search.
 original = (up/'bsdcompat/src/nmx_misc.c').read_text()

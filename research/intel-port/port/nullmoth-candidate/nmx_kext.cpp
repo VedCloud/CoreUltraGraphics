@@ -21,6 +21,8 @@
 #include <mach/kmod.h>
 #include <pexpert/pexpert.h>
 #include <kern/thread.h>
+#include <i386/machine_routines.h>
+#include <libkern/libkern.h>
 #include "nmx_port.h"
 #include "nmx_xnu.h"
 #include "nmx_i915_bridge.h"
@@ -84,6 +86,7 @@ IOService *NMXGPU::probe(IOService *provider, SInt32 *score)
 
 bool NMXGPU::start(IOService *provider)
 {
+    printf("CUG-HANDOFF-20261017-B1: start entered IF=%d\n", ml_get_interrupts_enabled());
     IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider);
     if (pci == nullptr || g_lock == nullptr || !IOService::start(provider))
         return false;
@@ -94,25 +97,27 @@ bool NMXGPU::start(IOService *provider)
             int policy_error = nmx_i915_set_guc_mode(guc);
             if (policy_error) {
                 IOLockUnlock(g_lock);
-                IOLog("NullMoth GPU: invalid nmxguc=%d (expected 0..3)\n", guc);
+                printf("NullMoth GPU: invalid nmxguc=%d (expected 0..3)\n", guc);
                 IOService::stop(provider);
                 return false;
             }
-            IOLog("NullMoth GPU: explicit i915 enable_guc=%d before port initialization\n", guc);
+            printf("NullMoth GPU: explicit i915 enable_guc=%d before port initialization\n", guc);
         }
+        printf("CUG-B1: before port-start IF=%d\n", ml_get_interrupts_enabled());
         int err = nmx_port_start();
+        printf("CUG-B1: after port-start error=%d IF=%d\n", err, ml_get_interrupts_enabled());
         if (err) {
             IOLockUnlock(g_lock);
-            IOLog("NullMoth GPU: the driver layer did not start (%d)\n", err);
+            printf("NullMoth GPU: the driver layer did not start (%d)\n", err);
             IOService::stop(provider);
             return false;
         }
-        IOLog("NullMoth GPU: stage port-start returned successfully\n");
+        printf("NullMoth GPU: stage port-start returned successfully\n");
         g_started = true;
     }
     g_devices++;
     IOLockUnlock(g_lock);
-    IOLog("NullMoth GPU: stage start lock released\n");
+    printf("NullMoth GPU: stage start lock released\n");
 
     /*
      * amdgpu, i915 and xe load firmware while they attach. During boot matching that read would come before the root and
@@ -127,26 +132,20 @@ bool NMXGPU::start(IOService *provider)
     attach_ = 0;
     __atomic_store_n(&attach_thread_stage_, 0u, __ATOMIC_RELEASE);
     retain();
-    IOLog("NullMoth GPU: stage creating attach thread\n");
+    printf("NullMoth GPU: stage creating attach thread\n");
     thread_t t = THREAD_NULL;
     if (kernel_thread_start(&NMXGPU::attachThread, this, &t) != KERN_SUCCESS) {
-        IOLog("NullMoth GPU: could not start the attach thread\n");
+        printf("NullMoth GPU: could not start the attach thread\n");
         attach_ = -1;
         release();
         return true;
     }
     thread_deallocate(t);
-    IOLog("NullMoth GPU: stage attach thread created\n");
-    /* Yield briefly to observe entry without holding g_lock. Do not treat a
-       late worker as a failure or cancel it: this is not an attach timeout. */
-    for (unsigned int i = 0; i < 100; ++i) {
-        if (__atomic_load_n(&attach_thread_stage_, __ATOMIC_ACQUIRE) >= 3u)
-            break;
-        IOSleep(10);
-    }
-    IOLog("NullMoth GPU: worker checkpoint=%u (0=not entered, 1=before log, "
-          "2=before registry, 3=firmware wait, 4=wait returned)\n",
-          __atomic_load_n(&attach_thread_stage_, __ATOMIC_ACQUIRE));
+    printf("NullMoth GPU: stage attach thread created\n");
+    /* Never wait for the worker while IOKit is still inside start(). */
+    printf("CUG-B1: start returning checkpoint=%u IF=%d\n",
+           __atomic_load_n(&attach_thread_stage_, __ATOMIC_ACQUIRE),
+           ml_get_interrupts_enabled());
     return true;
 }
 
@@ -193,7 +192,7 @@ static void nmx_marker_write(bool on)
 {
     IODTNVRAM *n = nmx_nvram();
     if (n == nullptr) {
-        IOLog("NullMoth GPU: no NVRAM; the boot guard is off\n");
+        printf("NullMoth GPU: no NVRAM; the boot guard is off\n");
         return;
     }
     const OSSymbol *k = OSSymbol::withCString(kAttachMarker);
@@ -201,7 +200,7 @@ static void nmx_marker_write(bool on)
         if (on) {
             OSData *d = OSData::withBytes("1", 1);
             if (d == nullptr || !n->setProperty(k, d))
-                IOLog("NullMoth GPU: could not set the boot guard\n");
+                printf("NullMoth GPU: could not set the boot guard\n");
             if (d)
                 d->release();
         } else {
@@ -215,37 +214,37 @@ static void nmx_marker_write(bool on)
 
 void NMXGPU::attachNow()
 {
-    IOLog("NullMoth GPU: stage attach thread entered; waiting for firmware root\n");
+    printf("NullMoth GPU: stage attach thread entered; waiting for firmware root\n");
     __atomic_store_n(&attach_thread_stage_, 2u, __ATOMIC_RELEASE);
     setProperty("nullmoth-gpu-state", "waiting: firmware root");
     __atomic_store_n(&attach_thread_stage_, 3u, __ATOMIC_RELEASE);
     int err = nmx_xnu_wait_firmware_root(300);
     __atomic_store_n(&attach_thread_stage_, 4u, __ATOMIC_RELEASE);
-    IOLog("NullMoth GPU: stage firmware-root wait returned %d\n", err);
+    printf("NullMoth GPU: stage firmware-root wait returned %d\n", err);
     if (err) {
-        IOLog("NullMoth GPU: the firmware folder never appeared (%d); this GPU stays with macOS\n", err);
+        printf("NullMoth GPU: the firmware folder never appeared (%d); this GPU stays with macOS\n", err);
         attach_ = -1;
         return;
     }
-    IOLog("NullMoth GPU: stage reading attach guard\n");
+    printf("NullMoth GPU: stage reading attach guard\n");
     if (nmx_marker_set()) {
-        IOLog("NullMoth GPU: the last attach of %04x:%04x never returned (the Mac stopped or restarted); this GPU stays "
+        printf("NullMoth GPU: the last attach of %04x:%04x never returned (the Mac stopped or restarted); this GPU stays "
               "with macOS. Send logs, then turn the test driver off and on to try again\n",
               pci_->configRead16(kIOPCIConfigVendorID), pci_->configRead16(kIOPCIConfigDeviceID));
         setProperty("nullmoth-gpu-state", "parked: the last attach never returned");
         attach_ = -1;
         return;
     }
-    IOLog("NullMoth GPU: stage writing attach guard\n");
+    printf("NullMoth GPU: stage writing attach guard\n");
     nmx_marker_write(true);
-    IOLog("NullMoth GPU: stage entering PCI driver attachment\n");
+    printf("NullMoth GPU: stage entering PCI driver attachment\n");
     setProperty("nullmoth-gpu-state", "attaching: PCI driver");
     dev_ = nmx_port_attach(pci_);
-    IOLog("NullMoth GPU: stage PCI driver attachment returned %s\n",
+    printf("NullMoth GPU: stage PCI driver attachment returned %s\n",
           dev_ ? "device" : "null");
     if (dev_ == nullptr) {
         nmx_marker_write(false);
-        IOLog("NullMoth GPU: no driver took %04x:%04x\n", pci_->configRead16(kIOPCIConfigVendorID),
+        printf("NullMoth GPU: no driver took %04x:%04x\n", pci_->configRead16(kIOPCIConfigVendorID),
               pci_->configRead16(kIOPCIConfigDeviceID));
         attach_ = -1;
         return;
@@ -264,7 +263,7 @@ void NMXGPU::attachNow()
     if (fb_ == nullptr) {
         setProperty("nullmoth-gpu-state", "attached: framebuffer unavailable");
         nmx_marker_write(false);
-        IOLog("NullMoth GPU: no framebuffer; withholding the accelerator claim\n");
+        printf("NullMoth GPU: no framebuffer; withholding the accelerator claim\n");
         attach_ = -1;
         return;
     }
@@ -272,7 +271,7 @@ void NMXGPU::attachNow()
     pci_->setProperty("nmxgpu-claimed", kOSBooleanTrue);
     pci_->registerService();
     nmx_marker_write(false);
-    IOLog("NullMoth GPU: driving %04x:%04x\n", pci_->configRead16(kIOPCIConfigVendorID),
+    printf("NullMoth GPU: driving %04x:%04x\n", pci_->configRead16(kIOPCIConfigVendorID),
           pci_->configRead16(kIOPCIConfigDeviceID));
     OSSynchronizeIO();
     attach_ = 1;
@@ -304,7 +303,7 @@ IOReturn NMXGPU::setPowerState(unsigned long state, IOService *device)
     if (dev_ != nullptr) {
         int err = nmx_port_power(dev_, state != 0);
         if (err)
-            IOLog("NullMoth GPU: %s returned %d\n", state ? "resume" : "suspend", err);
+            printf("NullMoth GPU: %s returned %d\n", state ? "resume" : "suspend", err);
     }
     return kIOPMAckImplied;
 }
@@ -335,7 +334,7 @@ kern_return_t nmx_kmod_stop(kmod_info_t *ki, void *data)
     if (g_started) {
         if (g_devices > 0 || nmx_port_busy() > 0) {
             IOLockUnlock(g_lock);
-            IOLog("NullMoth GPU: still in use; not unloading\n");
+            printf("NullMoth GPU: still in use; not unloading\n");
             return KERN_FAILURE;
         }
         nmx_port_stop();
