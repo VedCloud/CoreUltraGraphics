@@ -1,0 +1,52 @@
+name: Intel GuC and GGTT source rebuild
+on:
+  push:
+    branches: [graphics-firmware-build]
+    paths: ['research/intel-port/**', '.github/workflows/intel-port.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: intel-port-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: python3 research/intel-port/tools/test-intel-bridge.py
+  macos-rebuild:
+    needs: host-tests
+    runs-on: macos-15-intel
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Fetch and verify pinned sources
+        run: python3 research/intel-port/tools/fetch-intel-build-inputs.py
+      - name: Generate source overlay
+        run: python3 research/intel-port/tools/prepare-intel-bridge-overlay.py
+      - name: Compile changed components against real headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          for source in nmx_i915_bridge.c nmx_fb_bridge.c nmx_kext.cpp layout-probe.c; do
+            python3 research/intel-port/tools/compile-intel-bridge.py "$source"
+          done
+      - name: Rebuild i915 and the DRM port runtime
+        run: |
+          python3 research/intel-port/tools/compile-intel-driver.py
+          python3 research/intel-port/tools/compile-intel-runtime.py
+      - name: Link and inspect experimental Intel-only kext
+        run: python3 research/intel-port/tools/link-intel-port.py
+      - name: Preserve build logs and any linked artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Intel-port-source-build-${{ github.sha }}
+          path: research/intel-port/evidence/
+          if-no-files-found: warn
+          retention-days: 14

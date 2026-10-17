@@ -1,0 +1,24 @@
+{
+  "date": "2026-10-17",
+  "target": "Intel 8086:7D45 rev08, macOS Sequoia x86_64",
+  "i915_units": {
+    "total": 273,
+    "passed": 273
+  },
+  "runtime_units": {
+    "total": 163,
+    "passed": 163
+  },
+  "tests": {
+    "result": "PASS: 24 lifecycle, fault, GuC-policy and aperture-range cases; 65536 bitcount inputs; kernel calls simulated.",
+    "compiler_stderr": "",
+    "limitations": "Production C control flow with kernel API doubles, not hardware/macos runtime validation."
+  },
+  "final_kext_link": {
+    "local_result": "Windows Zig reports unsupported linker arg: -kext",
+    "macos_actions": "Requested; inspect workflow results"
+  },
+  "hardware_tested": false,
+  "metal_verified": false,
+  "installed": false
+}

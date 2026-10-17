@@ -1,0 +1,27 @@
+{
+  "base_commit": "277a29bea10371a88c4c1fb104409060d31962e8",
+  "files": [
+    {
+      "path": "override/src/nmx_fb_bridge.c",
+      "original_sha256": "06873e8da6831ede368e890a3a302b85df0015e664d52571631f9dd7442edc0b",
+      "candidate_sha256": "c668da0d5dede4f183a50354e55bbe45cda60c826bd44c93e9d8386143aca3e1"
+    },
+    {
+      "path": "xnu/nmx_kext.cpp",
+      "original_sha256": "b19c13eddef9bee26c3db25a871bbd54bba88c1750e5f03eda3ac079db4491b9",
+      "candidate_sha256": "b852d735a1d8080e12d84a1a89b2de4df97f01e99e95cc59ec393b53a20549bf"
+    },
+    {
+      "path": "bsdcompat/src/nmx_misc.c",
+      "original_sha256": "d2ebb2269f529126b4fd1d1aa2ee7858ee47d62fe726abc5092ea2c1b72ec982",
+      "candidate_sha256": "0296f0520a66de094e33f62e183951a8e296d332e6d598304c9514ae8a5606d9"
+    },
+    {
+      "path": "xnu/nmx_platform.cpp",
+      "original_sha256": "b0beafbb67c851715d75e78e80f62e9d38c80698cba5975f8a79150785207369",
+      "candidate_sha256": "d78f4b19570ad0db0292febd3f65a63ff48acda290afd824323905d3572401c4"
+    }
+  ],
+  "linked_into_kext": false,
+  "installed": false
+}

@@ -37,14 +37,16 @@ The link-line requirement documented in `kmod_info.c`
 (`*.o -lkmodc++ kmod_info.o -lkmod`) is taken from XNU's own
 `libkern/kmod/README`, and is reproduced here for reference.
 
-## MacKernelSDK — investigated, not used
+## MacKernelSDK — pinned kernel headers
 
 CI run `37789952837` tested `acidanthera/MacKernelSDK` at pinned revision
 `3f750085caa17ec3a7880f11c11bf4f48cd6a164`. Its `Library/x86_64/libkmod.a`
 contains exactly the same members Xcode's SDK ships (`__.SYMDEF SORTED`,
 `c_start.o`, `c_stop.o`), and `nm --defined-only` reported **zero**
-definitions of `_kmod_info` across all of its archives. It is therefore
-**not** a dependency of this project and is not vendored or downloaded.
+definitions of `_kmod_info` across all of its archives. That result concerns
+module metadata, not whether its headers are useful. The graphics diagnostic
+workflow and Intel source rebuild now use its pinned kernel headers. The build
+fetcher downloads the source archive; it is not vendored in this repository.
 
 To reproduce that check:
 
@@ -57,3 +59,16 @@ nm --defined-only /tmp/mks/Library/x86_64/libkmod.a | grep -c _kmod_info   # -> 
 MacKernelSDK itself carries no SPDX licence identifier upstream
 (`license: NOASSERTION`); its contents are derived from the same
 APL-1.1 XNU material above.
+
+## Experimental Intel port overlay
+
+`research/intel-port` contains standalone MIT-noticed helpers and modifications
+to the NullMoth port at `277a29bea10371a88c4c1fb104409060d31962e8`. The upstream
+port and derived overlay remain subject to PolyForm Noncommercial 1.0.0; the
+full terms are included at `research/intel-port/LICENSE.NULLMOTH.txt`.
+
+The dependency fetcher preserves pinned Intel/DRM/FreeBSD/Apple input notices.
+These dependencies retain their upstream licences. The source archive's NPU
+licence notices also remain with its extracted contents. New helper SPDX
+notices do not relicense the combined driver. This source overlay does not
+redistribute firmware or the upstream Metal plug-in.

@@ -1,0 +1,182 @@
+--- a/gpu-port/xkpi/override/src/nmx_fb_bridge.c
++++ b/gpu-port/xkpi/override/src/nmx_fb_bridge.c
+@@ -16,6 +16,7 @@
+ 
+ #include <drm/drm_client.h>
+ #include <drm/drm_device.h>
++#include <drm/drm_drv.h>
+ #include <drm/drm_fourcc.h>
+ #include <drm/drm_framebuffer.h>
+ #include <drm/drm_modes.h>
+@@ -25,12 +26,14 @@
+ 
+ #include "nmx_xnu.h"
+ #include "nmx_port.h"
++#include "nmx_i915_bridge.h"
+ 
+ struct nmx_fb {
+     struct drm_client_dev client;
+     struct drm_client_buffer *buffer;
+     struct iosys_map map;
+     int mapped;
++    struct nmx_i915_mapping *intel_mapping;
+     struct nmx_fb_info info;
+ };
+ 
+@@ -42,11 +45,15 @@
+  * amdgpu may put scan-out buffers in system memory on APUs (scatter-gather display); the bridge needs them in
+  * contiguous VRAM so one physical range describes the whole frame. Set before the driver initialises its display.
+  */
++#ifndef NMX_INTEL_ONLY
+ extern int amdgpu_sg_display;
++#endif
+ 
+ void nmx_fb_before_attach(void)
+ {
++#ifndef NMX_INTEL_ONLY
+     amdgpu_sg_display = 0;
++#endif
+ }
+ 
+ /* the DRM device of the driver attached to the PCI function 'dev' (amdgpu keeps it as the PCI driver data) */
+@@ -118,7 +125,9 @@
+ 
+ static void bridge_free(struct nmx_fb *fb)
+ {
+-    if (fb->mapped)
++    if (fb->intel_mapping)
++        nmx_i915_fb_unmap(fb->intel_mapping);
++    else if (fb->mapped)
+         drm_client_buffer_vunmap(fb->buffer);
+     if (fb->buffer != NULL)
+         drm_client_framebuffer_delete(fb->buffer);
+@@ -189,7 +198,17 @@
+     }
+     out->pitch = fb->buffer->fb->pitches[0];
+ 
+-    err = -drm_client_buffer_vmap(fb->buffer, &fb->map);
++    uint64_t size = (uint64_t)out->pitch * out->height;
++    uint64_t base = 0;
++    if (!size || size > UINT64_MAX - (PAGE_SIZE - 1)) {
++        err = EOVERFLOW;
++        goto fail;
++    }
++    if (!strcmp(drm->driver->name, "i915"))
++        err = -nmx_i915_fb_map(fb->buffer, &fb->map, round_page(size),
++                              &base, &fb->intel_mapping);
++    else
++        err = -drm_client_buffer_vmap(fb->buffer, &fb->map);
+     if (err) {
+         printf("NullMoth display: the scan-out buffer would not map (%d)\n", err);
+         goto fail;
+@@ -198,8 +217,13 @@
+ 
+     /* the published range must be one physical run: check every page of the CPU view */
+     const char *va = fb->map.is_iomem ? (const char *)fb->map.vaddr_iomem : (const char *)fb->map.vaddr;
+-    uint64_t size = (uint64_t)out->pitch * out->height;
+-    uint64_t base = nmx_xnu_kva_to_phys(va);
++    if (!fb->intel_mapping)
++        base = nmx_xnu_kva_to_phys(va);
++    /* Reject an existing i915 CPU mapping that does not address this aperture. */
++    if (fb->intel_mapping && nmx_xnu_kva_to_phys(va) != base) {
++        err = EFAULT;
++        goto fail;
++    }
+     for (uint64_t off = PAGE_SIZE; off < size; off += PAGE_SIZE)
+         if (nmx_xnu_kva_to_phys(va + off) != base + off) {
+             printf("NullMoth display: the scan-out buffer is not physically contiguous (page %llu)\n",
+@@ -214,7 +238,7 @@
+     out->phys = base;
+     out->size = round_page(size);
+     out->kva = (uint64_t)(uintptr_t)va;
+-    memset(__DECONST(char *, va), 0, size);       /* black until WindowServer draws */
++    iosys_map_memset(&fb->map, 0, 0, size);       /* black until WindowServer draws */
+ 
+     mutex_lock(&fb->client.modeset_mutex);
+     drm_client_for_each_modeset(ms, &fb->client)
+--- a/gpu-port/xkpi/xnu/nmx_kext.cpp
++++ b/gpu-port/xkpi/xnu/nmx_kext.cpp
+@@ -23,6 +23,7 @@
+ #include <kern/thread.h>
+ #include "nmx_port.h"
+ #include "nmx_xnu.h"
++#include "nmx_i915_bridge.h"
+ 
+ #define AMD_VENDOR 0x1002
+ #define INTEL_VENDOR 0x8086
+@@ -87,6 +88,17 @@
+         return false;
+     IOLockLock(g_lock);
+     if (!g_started) {
++        int guc = 0;
++        if (PE_parse_boot_argn("nmxguc", &guc, sizeof(guc))) {
++            int policy_error = nmx_i915_set_guc_mode(guc);
++            if (policy_error) {
++                IOLockUnlock(g_lock);
++                IOLog("NullMoth GPU: invalid nmxguc=%d (expected 0..3)\n", guc);
++                IOService::stop(provider);
++                return false;
++            }
++            IOLog("NullMoth GPU: explicit i915 enable_guc=%d before port initialization\n", guc);
++        }
+         int err = nmx_port_start();
+         if (err) {
+             IOLockUnlock(g_lock);
+@@ -218,12 +230,17 @@
+     registerPowerDriver(this, states, 2);
+     pm_ = true;
+     registerService();
+-    /* NMXAccel (the Metal accelerator for this GPU) starts only on a device this driver has claimed; it declined while
+-       the claim was pending, so matching on the device runs again now that it is set */
++    fb_ = nmx_fb_publish(this, dev_);
++    if (fb_ == nullptr) {
++        setProperty("nullmoth-gpu-state", "attached: framebuffer unavailable");
++        nmx_marker_write(false);
++        IOLog("NullMoth GPU: no framebuffer; withholding the accelerator claim\n");
++        attach_ = -1;
++        return;
++    }
++    /* Start accelerator matching only after the framebuffer exists. */
+     pci_->setProperty("nmxgpu-claimed", kOSBooleanTrue);
+     pci_->registerService();
+-    /* light the outputs and hand them to macOS; without it the device still renders, with no screen of its own */
+-    fb_ = nmx_fb_publish(this, dev_);
+     nmx_marker_write(false);
+     IOLog("NullMoth GPU: driving %04x:%04x\n", pci_->configRead16(kIOPCIConfigVendorID),
+           pci_->configRead16(kIOPCIConfigDeviceID));
+--- a/gpu-port/xkpi/bsdcompat/src/nmx_misc.c
++++ b/gpu-port/xkpi/bsdcompat/src/nmx_misc.c
+@@ -607,7 +607,7 @@
+     return x ? 64 - __builtin_clzll(x) : 0;
+ }
+ 
+-char *strnstr(const char *s, const char *find, size_t slen)
++char *strnstr(char *s, const char *find, size_t slen)
+ {
+     size_t len = strlen(find);
+     if (len == 0)
+--- a/gpu-port/xkpi/xnu/nmx_platform.cpp
++++ b/gpu-port/xkpi/xnu/nmx_platform.cpp
+@@ -27,6 +27,13 @@
+ #include <sys/errno.h>
+ #include <string.h>
+ #include "nmx_xnu.h"
++static bool nmx_path_has_parent_marker(const char *p)
++{
++    for (; *p; ++p)
++        if (p[0] == '.' && p[1] == '.')
++            return true;
++    return false;
++}
+ 
+ /* ---- firmware ----------------------------------------------------------------------------------------------------- */
+ 
+@@ -60,7 +67,7 @@
+ {
+     *data = nullptr;
+     *size = 0;
+-    if (name == nullptr || strnstr(name, "..", strlen(name) + 1) != nullptr || name[0] == '/')
++    if (name == nullptr || nmx_path_has_parent_marker(name) || name[0] == '/')
+         return EINVAL;
+     char path[512];
+     if (snprintf(path, sizeof(path), "%s%s", FIRMWARE_ROOT, name) >= (int)sizeof(path))

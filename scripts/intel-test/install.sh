@@ -66,7 +66,7 @@ if [ "$PHASE" != new ]; then
 fi
 echo 'Plan: Intel NMXGPU/NMXAccel + ANV + Metal plugin; no NVIDIA/NPU kernel driver.'
 echo 'Staged security: csr-active-config 0x0A43, upstream AMFI boot arguments, AMFIPass.'
-echo 'Activation restores the GPU class and replaces the UEFI framebuffer with the Intel display path.'
+echo 'Activation exposes the GPU to the Intel driver; the prepared EFI controls the firmware framebuffer fallback.'
 echo 'This is an unvalidated hardware experiment, not a guarantee of Metal acceleration.'
 [ "${1:-}" != --check ] || { echo "Preflight checks passed. Phase: $PHASE. No configuration changed."; exit 0; }
 chmod 755 "$KIT/verify-metal" 2>/dev/null || true
@@ -170,7 +170,19 @@ done < <(cug_targets)
 chmod -R 755 /Library/Extensions/NMXGPU.kext /Library/Extensions/NMXAccel.kext
 chmod 644 /Library/GPUBundles/nvmtl-allow.txt
 sudo -u _windowserver /bin/test -r /Library/GPUBundles/nvmtl-allow.txt
-cug_atomic_copy "$WORK/test.kc" "$KC"
+# The preflight collection contains temporary repository paths. Build the
+# published collection from permanent installed paths so kernelmanagerd can
+# authenticate and locate the bundles after the staging directory is removed.
+kmutil create -n aux --volume-root / "${KARG[@]}" \
+    -B /System/Library/KernelCollections/BootKernelExtensions.kc \
+    -S /System/Library/KernelCollections/SystemKernelExtensions.kc \
+    --repository /Library/Extensions -A "$WORK/installed.kc" -z > "$S/kmutil-installed.log" 2>&1
+kmutil inspect -a x86_64 -A "$WORK/installed.kc" > "$S/kmutil-installed-inspect.log"
+for k in NMXGPU NMXAccel; do
+    grep -F "com.nullmoth.$k" "$S/kmutil-installed-inspect.log" | grep -Fq "/Library/Extensions/$k.kext" \
+        || cug_die "Installed collection has no permanent path for $k."
+done
+cug_atomic_copy "$WORK/installed.kc" "$KC"
 mkdir -p /Library/GPUBundles/nvmtl/aircache /Library/GPUBundles/nvmtl/spvcache
 chown _windowserver:wheel /Library/GPUBundles/nvmtl/aircache /Library/GPUBundles/nvmtl/spvcache
 chmod 755 /Library/GPUBundles/nvmtl/aircache /Library/GPUBundles/nvmtl/spvcache
