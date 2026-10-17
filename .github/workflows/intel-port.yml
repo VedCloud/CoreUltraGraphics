@@ -4,8 +4,14 @@ on:
     branches: [graphics-firmware-build]
     paths: ['research/intel-port/**', '.github/workflows/intel-port.yml']
   workflow_dispatch:
+    inputs:
+      reuse_run:
+        description: 'Optional prior full source-build run; source hashes must still match'
+        required: false
+        default: ''
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: intel-port-${{ github.ref }}
   cancel-in-progress: true
@@ -30,6 +36,7 @@ jobs:
       - name: Generate source overlay
         run: python3 research/intel-port/tools/prepare-intel-bridge-overlay.py
       - name: Compile changed components against real headers
+        if: inputs.reuse_run == ''
         shell: bash
         run: |
           set -euo pipefail
@@ -37,10 +44,22 @@ jobs:
             python3 research/intel-port/tools/compile-intel-bridge.py "$source"
           done
       - name: Rebuild i915 and the DRM port runtime
+        if: inputs.reuse_run == ''
         run: |
           python3 research/intel-port/tools/compile-intel-driver.py
           python3 research/intel-port/tools/compile-intel-runtime.py
+      - name: Reuse compiled objects with source-hash validation at link
+        if: inputs.reuse_run != ''
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.reuse_run }}
+          pattern: Intel-port-source-build-*
+          path: research/intel-port/evidence/
+          merge-multiple: true
       - name: Link and inspect experimental Intel-only kext
+        env:
+          SOURCE_BUILD_RUN: ${{ inputs.reuse_run || github.run_id }}
         run: python3 research/intel-port/tools/link-intel-port.py
       - name: Preserve build logs and any linked artifact
         if: always()

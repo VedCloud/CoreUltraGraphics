@@ -6,6 +6,7 @@ import plistlib
 import re
 import subprocess
 import sys
+import os
 
 root=Path(__file__).resolve().parents[1]
 if sys.platform!='darwin':
@@ -16,13 +17,21 @@ for folder in ('intel-driver-build','intel-runtime-build'):
     report=json.loads((directory/'results.json').read_text())
     if report['passed']!=report['source_count']:
         raise SystemExit('Incomplete source compilation: '+folder)
-    objects += [directory/row['object'] for row in report['results']]
+    for row in report['results']:
+        source=Path(row['source'])
+        if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest()!=row['sha256']:
+            raise SystemExit('Compiled source differs from this checkout: '+str(source))
+        objects.append(directory/row['object'])
 out=root/'evidence/intel-linked-build'
 binary=out/'NMXGPU.kext/Contents/MacOS/NMXGPU'
 binary.parent.mkdir(parents=True,exist_ok=True)
 compiler=subprocess.check_output(['xcrun','--find','clang++'],text=True).strip()
+sdk=subprocess.check_output(['xcrun','--sdk','macosx','--show-sdk-path'],text=True).strip()
+kernel_sdk=root/'tooling/build-inputs/MacKernelSDK-3f750085caa17ec3a7880f11c11bf4f48cd6a164'
 command=[compiler,'-arch','x86_64','-mmacosx-version-min=15.0','-mkernel','-fapple-kext',
-         '-static','-nostdlib','-Xlinker','-kext','-Xlinker','-no_deduplicate',
+         '-static','-nostdlib','-isysroot',sdk,
+         '-L'+str(kernel_sdk/'Library/x86_64'),'-L'+str(kernel_sdk/'Library/universal'),
+         '-Xlinker','-kext','-Xlinker','-no_deduplicate',
          *map(str,objects),'-lkmodc++','-lkmod','-lcc_kext','-o',str(binary)]
 run=subprocess.run(command,capture_output=True,text=True)
 (out/'link.log').write_text(run.stdout+run.stderr)
@@ -45,6 +54,8 @@ if bad or not re.search(r'\b_kmod_info\b',exports):
 subprocess.run(['plutil','-lint',str(binary.parent.parent/'Info.plist')],check=True)
 subprocess.run(['otool','-hv',str(binary)],check=True)
 result=dict(sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),objects=len(objects),
+            source_build_run=os.environ.get('SOURCE_BUILD_RUN'),
             hardware_tested=False,metal_verified=False,installed=False)
+(out/'LICENSE.NULLMOTH.txt').write_bytes((root/'LICENSE.NULLMOTH.txt').read_bytes())
 (out/'build-result.json').write_text(json.dumps(result,indent=2)+'\n')
 print(json.dumps(result,indent=2))
