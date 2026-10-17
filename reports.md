@@ -137,6 +137,13 @@ The link reused the passing macOS compilation with source-hash verification.
 The first link attempt failed because kernel runtime library search paths were
 missing; adding the pinned SDK paths and macOS sysroot resolved it.
 
+A subsequent [clean macOS rebuild, run 39032989697](https://github.com/VedCloud2/CoreUltraGraphics/actions/runs/39032989697),
+also passed all 436 compilations, the final link, symbol/metadata inspection,
+host tests and installer shell syntax check. That separate build's binary SHA256
+is `a3b68fe228a43c85d1bdd675791ae9845d5918e448faf223b1049b40502c939b`.
+The prepared USB intentionally retains the specifically inspected **3ed1770f…**
+artifact and its matching installer checksums. Neither build has a hardware result.
+
 The guarded installer stages the candidate while the old driver is parked with
 `-nvoff`, backs up binary/metadata/collection/configuration, checks permanent KC
 paths and activates the new USB configuration last. Mac installation and the
