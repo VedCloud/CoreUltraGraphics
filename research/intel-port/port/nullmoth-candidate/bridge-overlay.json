@@ -9,7 +9,7 @@
     {
       "path": "xnu/nmx_kext.cpp",
       "original_sha256": "b19c13eddef9bee26c3db25a871bbd54bba88c1750e5f03eda3ac079db4491b9",
-      "candidate_sha256": "db59253887b07ea9599050c7939503a8b73c05447eff7bf6b5808d4ff073d59d"
+      "candidate_sha256": "34a8ff425ad6eb99eec0acc53a92eb5d860b5b4e35eea4a7aeded3f4c0acfdd5"
     },
     {
       "path": "bsdcompat/src/nmx_misc.c",

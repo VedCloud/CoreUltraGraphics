@@ -39,6 +39,7 @@ class NMXGPU : public IOService {
     IOPCIDevice *pci_;
     volatile int attach_;   /* 0 = attach pending on its thread, 1 = attached, -1 = not attached */
     bool pm_;
+    unsigned int attach_thread_stage_; /* atomic diagnostic checkpoints only */
     static void attachThread(void *arg, wait_result_t);
     void attachNow();
 public:
@@ -124,6 +125,7 @@ bool NMXGPU::start(IOService *provider)
     fb_ = nullptr;
     pm_ = false;
     attach_ = 0;
+    __atomic_store_n(&attach_thread_stage_, 0u, __ATOMIC_RELEASE);
     retain();
     IOLog("NullMoth GPU: stage creating attach thread\n");
     thread_t t = THREAD_NULL;
@@ -135,12 +137,24 @@ bool NMXGPU::start(IOService *provider)
     }
     thread_deallocate(t);
     IOLog("NullMoth GPU: stage attach thread created\n");
+    /* Yield briefly to observe entry without holding g_lock. Do not treat a
+       late worker as a failure or cancel it: this is not an attach timeout. */
+    for (unsigned int i = 0; i < 100; ++i) {
+        if (__atomic_load_n(&attach_thread_stage_, __ATOMIC_ACQUIRE) >= 3u)
+            break;
+        IOSleep(10);
+    }
+    IOLog("NullMoth GPU: worker checkpoint=%u (0=not entered, 1=before log, "
+          "2=before registry, 3=firmware wait, 4=wait returned)\n",
+          __atomic_load_n(&attach_thread_stage_, __ATOMIC_ACQUIRE));
     return true;
 }
 
 void NMXGPU::attachThread(void *arg, wait_result_t)
 {
     NMXGPU *self = (NMXGPU *)arg;
+    /* No logging, registry operation or allocation before this checkpoint. */
+    __atomic_store_n(&self->attach_thread_stage_, 1u, __ATOMIC_RELEASE);
     self->attachNow();
     self->release();
 }
@@ -202,8 +216,11 @@ static void nmx_marker_write(bool on)
 void NMXGPU::attachNow()
 {
     IOLog("NullMoth GPU: stage attach thread entered; waiting for firmware root\n");
+    __atomic_store_n(&attach_thread_stage_, 2u, __ATOMIC_RELEASE);
     setProperty("nullmoth-gpu-state", "waiting: firmware root");
+    __atomic_store_n(&attach_thread_stage_, 3u, __ATOMIC_RELEASE);
     int err = nmx_xnu_wait_firmware_root(300);
+    __atomic_store_n(&attach_thread_stage_, 4u, __ATOMIC_RELEASE);
     IOLog("NullMoth GPU: stage firmware-root wait returned %d\n", err);
     if (err) {
         IOLog("NullMoth GPU: the firmware folder never appeared (%d); this GPU stays with macOS\n", err);

@@ -83,6 +83,14 @@ source = replace(source, claim, '''    fb_ = nmx_fb_publish(this, dev_);
     pci_->registerService();''')
 # Boundaries before PCI matching were silent in the first source-build boot.
 # These messages describe entry/return only; none claims firmware or GPU success.
+source = replace(source, '    bool pm_;', '''    bool pm_;
+    unsigned int attach_thread_stage_; /* atomic diagnostic checkpoints only */''')
+source = replace(source, '    attach_ = 0;\n    retain();', '''    attach_ = 0;
+    __atomic_store_n(&attach_thread_stage_, 0u, __ATOMIC_RELEASE);
+    retain();''')
+source = replace(source, '    self->attachNow();', '''    /* No logging, registry operation or allocation before this checkpoint. */
+    __atomic_store_n(&self->attach_thread_stage_, 1u, __ATOMIC_RELEASE);
+    self->attachNow();''')
 source = replace(source, '        g_started = true;', '''        IOLog("NullMoth GPU: stage port-start returned successfully\\n");
         g_started = true;''')
 source = replace(source, '    IOLockUnlock(g_lock);\n\n    /*', '''    IOLockUnlock(g_lock);
@@ -92,10 +100,23 @@ source = replace(source, '    IOLockUnlock(g_lock);\n\n    /*', '''    IOLockUnl
 source = replace(source, '    thread_t t = THREAD_NULL;', '''    IOLog("NullMoth GPU: stage creating attach thread\\n");
     thread_t t = THREAD_NULL;''')
 source = replace(source, '    thread_deallocate(t);', '''    thread_deallocate(t);
-    IOLog("NullMoth GPU: stage attach thread created\\n");''')
+    IOLog("NullMoth GPU: stage attach thread created\\n");
+    /* Yield briefly to observe entry without holding g_lock. Do not treat a
+       late worker as a failure or cancel it: this is not an attach timeout. */
+    for (unsigned int i = 0; i < 100; ++i) {
+        if (__atomic_load_n(&attach_thread_stage_, __ATOMIC_ACQUIRE) >= 3u)
+            break;
+        IOSleep(10);
+    }
+    IOLog("NullMoth GPU: worker checkpoint=%u (0=not entered, 1=before log, "
+          "2=before registry, 3=firmware wait, 4=wait returned)\\n",
+          __atomic_load_n(&attach_thread_stage_, __ATOMIC_ACQUIRE));''')
 source = replace(source, '    int err = nmx_xnu_wait_firmware_root(300);', '''    IOLog("NullMoth GPU: stage attach thread entered; waiting for firmware root\\n");
+    __atomic_store_n(&attach_thread_stage_, 2u, __ATOMIC_RELEASE);
     setProperty("nullmoth-gpu-state", "waiting: firmware root");
+    __atomic_store_n(&attach_thread_stage_, 3u, __ATOMIC_RELEASE);
     int err = nmx_xnu_wait_firmware_root(300);
+    __atomic_store_n(&attach_thread_stage_, 4u, __ATOMIC_RELEASE);
     IOLog("NullMoth GPU: stage firmware-root wait returned %d\\n", err);''')
 source = replace(source, '    if (nmx_marker_set()) {', '''    IOLog("NullMoth GPU: stage reading attach guard\\n");
     if (nmx_marker_set()) {''')

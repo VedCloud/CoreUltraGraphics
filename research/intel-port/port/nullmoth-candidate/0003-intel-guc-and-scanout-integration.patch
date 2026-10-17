@@ -104,7 +104,15 @@
  
  #define AMD_VENDOR 0x1002
  #define INTEL_VENDOR 0x8086
-@@ -87,6 +88,17 @@
+@@ -38,6 +39,7 @@
+     IOPCIDevice *pci_;
+     volatile int attach_;   /* 0 = attach pending on its thread, 1 = attached, -1 = not attached */
+     bool pm_;
++    unsigned int attach_thread_stage_; /* atomic diagnostic checkpoints only */
+     static void attachThread(void *arg, wait_result_t);
+     void attachNow();
+ public:
+@@ -87,6 +89,17 @@
          return false;
      IOLockLock(g_lock);
      if (!g_started) {
@@ -122,7 +130,7 @@
          int err = nmx_port_start();
          if (err) {
              IOLockUnlock(g_lock);
-@@ -94,10 +106,12 @@
+@@ -94,10 +107,12 @@
              IOService::stop(provider);
              return false;
          }
@@ -135,29 +143,52 @@
  
      /*
       * amdgpu, i915 and xe load firmware while they attach. During boot matching that read would come before the root and
-@@ -111,6 +125,7 @@
+@@ -110,7 +125,9 @@
+     fb_ = nullptr;
      pm_ = false;
      attach_ = 0;
++    __atomic_store_n(&attach_thread_stage_, 0u, __ATOMIC_RELEASE);
      retain();
 +    IOLog("NullMoth GPU: stage creating attach thread\n");
      thread_t t = THREAD_NULL;
      if (kernel_thread_start(&NMXGPU::attachThread, this, &t) != KERN_SUCCESS) {
          IOLog("NullMoth GPU: could not start the attach thread\n");
-@@ -119,6 +134,7 @@
+@@ -119,12 +136,25 @@
          return true;
      }
      thread_deallocate(t);
 +    IOLog("NullMoth GPU: stage attach thread created\n");
++    /* Yield briefly to observe entry without holding g_lock. Do not treat a
++       late worker as a failure or cancel it: this is not an attach timeout. */
++    for (unsigned int i = 0; i < 100; ++i) {
++        if (__atomic_load_n(&attach_thread_stage_, __ATOMIC_ACQUIRE) >= 3u)
++            break;
++        IOSleep(10);
++    }
++    IOLog("NullMoth GPU: worker checkpoint=%u (0=not entered, 1=before log, "
++          "2=before registry, 3=firmware wait, 4=wait returned)\n",
++          __atomic_load_n(&attach_thread_stage_, __ATOMIC_ACQUIRE));
      return true;
  }
  
-@@ -185,12 +201,16 @@
+ void NMXGPU::attachThread(void *arg, wait_result_t)
+ {
+     NMXGPU *self = (NMXGPU *)arg;
++    /* No logging, registry operation or allocation before this checkpoint. */
++    __atomic_store_n(&self->attach_thread_stage_, 1u, __ATOMIC_RELEASE);
+     self->attachNow();
+     self->release();
+ }
+@@ -185,12 +215,19 @@
  
  void NMXGPU::attachNow()
  {
 +    IOLog("NullMoth GPU: stage attach thread entered; waiting for firmware root\n");
++    __atomic_store_n(&attach_thread_stage_, 2u, __ATOMIC_RELEASE);
 +    setProperty("nullmoth-gpu-state", "waiting: firmware root");
++    __atomic_store_n(&attach_thread_stage_, 3u, __ATOMIC_RELEASE);
      int err = nmx_xnu_wait_firmware_root(300);
++    __atomic_store_n(&attach_thread_stage_, 4u, __ATOMIC_RELEASE);
 +    IOLog("NullMoth GPU: stage firmware-root wait returned %d\n", err);
      if (err) {
          IOLog("NullMoth GPU: the firmware folder never appeared (%d); this GPU stays with macOS\n", err);
@@ -168,7 +199,7 @@
      if (nmx_marker_set()) {
          IOLog("NullMoth GPU: the last attach of %04x:%04x never returned (the Mac stopped or restarted); this GPU stays "
                "with macOS. Send logs, then turn the test driver off and on to try again\n",
-@@ -199,8 +219,13 @@
+@@ -199,8 +236,13 @@
          attach_ = -1;
          return;
      }
@@ -182,7 +213,7 @@
      if (dev_ == nullptr) {
          nmx_marker_write(false);
          IOLog("NullMoth GPU: no driver took %04x:%04x\n", pci_->configRead16(kIOPCIConfigVendorID),
-@@ -218,12 +243,17 @@
+@@ -218,12 +260,17 @@
      registerPowerDriver(this, states, 2);
      pm_ = true;
      registerService();
