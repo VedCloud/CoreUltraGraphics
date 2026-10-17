@@ -39,6 +39,8 @@ jobs:
           bash -n research/intel-port/tools/apply-recorded-test.sh
           bash -n research/intel-port/tools/apply-claim-gate.sh
           bash -n research/intel-port/tools/apply-claim-gate-test.sh
+          bash -n research/intel-port/tools/apply-B2.sh
+          bash -n research/intel-port/tools/apply-B2-test.sh
       - name: Test recorder timeout and capture ordering
         run: python3 research/intel-port/tools/test-boot-recorder.py
   macos-rebuild:
