@@ -143,6 +143,90 @@ source = source[:begin] + '''    /* Never wait for the worker while IOKit is sti
            ml_get_interrupts_enabled());
 ''' + source[end:]
 source = source.replace('IOLog(', 'printf(')
+# B2: no port initialization in the IOKit matching callback. Keep a device
+# reference/count until the worker is joined, even when runtime startup fails.
+source = replace(source, '    unsigned int attach_thread_stage_; /* atomic diagnostic checkpoints only */',
+    r'''    unsigned int attach_thread_stage_; /* atomic diagnostic checkpoints only */
+    unsigned int attach_thread_done_;
+    unsigned int attach_cancel_;''')
+start = source.index('    IOLockLock(g_lock);', source.index('bool NMXGPU::start('))
+end = source.index('    /*\n     * amdgpu', start)
+port_start = source[start:end]
+port_start = port_start[:port_start.index('    g_devices++;')]
+port_start = port_start.replace('                IOService::stop(provider);\n                return false;',
+    '                nmx_marker_write(false);\n                attach_ = -1;\n                return;')
+port_start = port_start.replace('            IOService::stop(provider);\n            return false;',
+    '            nmx_marker_write(false);\n            attach_ = -1;\n            return;')
+port_start += '    IOLockUnlock(g_lock);\n'
+source = source[:start] + r'''    /* Count the service before scheduling: an unstarted runtime is not unloadable
+       while a worker still holds code or the global lock. */
+    IOLockLock(g_lock);
+    g_devices++;
+    IOLockUnlock(g_lock);
+
+''' + source[end:]
+source = replace(source, 'CUG-HANDOFF-20261017-B1: start entered IF=%d',
+    'CUG-HANDOFF-20261017-B2: start entered IF=%d')
+source = replace(source, '    __atomic_store_n(&attach_thread_stage_, 0u, __ATOMIC_RELEASE);',
+    r'''    __atomic_store_n(&attach_thread_stage_, 0u, __ATOMIC_RELEASE);
+    __atomic_store_n(&attach_thread_done_, 0u, __ATOMIC_RELEASE);
+    __atomic_store_n(&attach_cancel_, 0u, __ATOMIC_RELEASE);
+    setProperty("nullmoth-gpu-build", "CUG-HANDOFF-20261017-B2");
+    setProperty("nullmoth-gpu-state", "queued: attach worker");''')
+source = replace(source, '    printf("NullMoth GPU: stage creating attach thread\\n");\n', '')
+source = replace(source, r'''        printf("NullMoth GPU: could not start the attach thread\n");
+        attach_ = -1;
+        release();
+        return true;''', r'''        attach_ = -1;
+        __atomic_store_n(&attach_thread_done_, 1u, __ATOMIC_RELEASE);
+        release();
+        IOLockLock(g_lock);
+        g_devices--;
+        IOLockUnlock(g_lock);
+        IOService::stop(provider);
+        return false;''')
+begin = source.index('    printf("NullMoth GPU: stage attach thread created')
+end = source.index('    return true;\n}', begin)
+source = source[:begin] + '    /* Return without waiting for port startup, firmware or the worker. */\n' + source[end:]
+source = replace(source, '    self->attachNow();\n    self->release();', r'''    self->attachNow();
+    /* Release publishes all dev_/fb_/pm_ writes to stop(), not merely attach_. */
+    __atomic_store_n(&self->attach_thread_done_, 1u, __ATOMIC_RELEASE);
+    self->release();''')
+source = replace(source, '    printf("NullMoth GPU: stage attach thread entered; waiting for firmware root\\n");',
+    r'''    if (__atomic_load_n(&attach_cancel_, __ATOMIC_ACQUIRE)) {
+        attach_ = -1;
+        return;
+    }
+    printf("CUG-B2: worker entered; waiting for firmware root\n");''')
+source = replace(source, '    if (err) {\n        printf("NullMoth GPU: the firmware folder never appeared',
+    '    if (err || __atomic_load_n(&attach_cancel_, __ATOMIC_ACQUIRE)) {\n        printf("NullMoth GPU: firmware wait failed or attachment cancelled')
+source = replace(source, '    nmx_marker_write(true);\n    printf("NullMoth GPU: stage entering PCI driver attachment\\n");',
+    '    nmx_marker_write(true);\n    setProperty("nullmoth-gpu-state", "initializing: port runtime");\n' +
+    port_start.replace('CUG-B1:', 'CUG-B2:') + r'''    if (__atomic_load_n(&attach_cancel_, __ATOMIC_ACQUIRE)) {
+        nmx_marker_write(false);
+        attach_ = -1;
+        return;
+    }
+    printf("NullMoth GPU: stage entering PCI driver attachment\n");''')
+source = replace(source, r'''    /* an attach still running on its thread finishes first (it holds a reference on this object meanwhile) */
+    for (int i = 0; attach_ == 0 && i < 6000; i++)
+        IOSleep(100);''', r'''    /* A timeout cannot grant ownership of resources still used by a worker.
+       Cancellation prevents a queued worker from attaching; an in-flight driver
+       call must finish before any framebuffer, PM or PCI resource is detached. */
+    __atomic_store_n(&attach_cancel_, 1u, __ATOMIC_RELEASE);
+    while (!__atomic_load_n(&attach_thread_done_, __ATOMIC_ACQUIRE))
+        IOSleep(100);''')
+# The count protects workers before g_started becomes true, too.
+source = replace(source, r'''    IOLockLock(g_lock);
+    if (g_started) {
+        if (g_devices > 0 || nmx_port_busy() > 0) {''', r'''    IOLockLock(g_lock);
+    if (g_devices > 0) {
+        IOLockUnlock(g_lock);
+        return KERN_FAILURE;
+    }
+    if (g_started) {
+        if (nmx_port_busy() > 0) {''')
+
 files.append(('xnu/nmx_kext.cpp', original, source))
 
 # Expose each boundary inside the formerly silent synchronous port startup.

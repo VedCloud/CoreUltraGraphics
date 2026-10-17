@@ -42,6 +42,8 @@ class NMXGPU : public IOService {
     volatile int attach_;   /* 0 = attach pending on its thread, 1 = attached, -1 = not attached */
     bool pm_;
     unsigned int attach_thread_stage_; /* atomic diagnostic checkpoints only */
+    unsigned int attach_thread_done_;
+    unsigned int attach_cancel_;
     static void attachThread(void *arg, wait_result_t);
     void attachNow();
 public:
@@ -86,38 +88,15 @@ IOService *NMXGPU::probe(IOService *provider, SInt32 *score)
 
 bool NMXGPU::start(IOService *provider)
 {
-    printf("CUG-HANDOFF-20261017-B1: start entered IF=%d\n", ml_get_interrupts_enabled());
+    printf("CUG-HANDOFF-20261017-B2: start entered IF=%d\n", ml_get_interrupts_enabled());
     IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider);
     if (pci == nullptr || g_lock == nullptr || !IOService::start(provider))
         return false;
+    /* Count the service before scheduling: an unstarted runtime is not unloadable
+       while a worker still holds code or the global lock. */
     IOLockLock(g_lock);
-    if (!g_started) {
-        int guc = 0;
-        if (PE_parse_boot_argn("nmxguc", &guc, sizeof(guc))) {
-            int policy_error = nmx_i915_set_guc_mode(guc);
-            if (policy_error) {
-                IOLockUnlock(g_lock);
-                printf("NullMoth GPU: invalid nmxguc=%d (expected 0..3)\n", guc);
-                IOService::stop(provider);
-                return false;
-            }
-            printf("NullMoth GPU: explicit i915 enable_guc=%d before port initialization\n", guc);
-        }
-        printf("CUG-B1: before port-start IF=%d\n", ml_get_interrupts_enabled());
-        int err = nmx_port_start();
-        printf("CUG-B1: after port-start error=%d IF=%d\n", err, ml_get_interrupts_enabled());
-        if (err) {
-            IOLockUnlock(g_lock);
-            printf("NullMoth GPU: the driver layer did not start (%d)\n", err);
-            IOService::stop(provider);
-            return false;
-        }
-        printf("NullMoth GPU: stage port-start returned successfully\n");
-        g_started = true;
-    }
     g_devices++;
     IOLockUnlock(g_lock);
-    printf("NullMoth GPU: stage start lock released\n");
 
     /*
      * amdgpu, i915 and xe load firmware while they attach. During boot matching that read would come before the root and
@@ -131,21 +110,24 @@ bool NMXGPU::start(IOService *provider)
     pm_ = false;
     attach_ = 0;
     __atomic_store_n(&attach_thread_stage_, 0u, __ATOMIC_RELEASE);
+    __atomic_store_n(&attach_thread_done_, 0u, __ATOMIC_RELEASE);
+    __atomic_store_n(&attach_cancel_, 0u, __ATOMIC_RELEASE);
+    setProperty("nullmoth-gpu-build", "CUG-HANDOFF-20261017-B2");
+    setProperty("nullmoth-gpu-state", "queued: attach worker");
     retain();
-    printf("NullMoth GPU: stage creating attach thread\n");
     thread_t t = THREAD_NULL;
     if (kernel_thread_start(&NMXGPU::attachThread, this, &t) != KERN_SUCCESS) {
-        printf("NullMoth GPU: could not start the attach thread\n");
         attach_ = -1;
+        __atomic_store_n(&attach_thread_done_, 1u, __ATOMIC_RELEASE);
         release();
-        return true;
+        IOLockLock(g_lock);
+        g_devices--;
+        IOLockUnlock(g_lock);
+        IOService::stop(provider);
+        return false;
     }
     thread_deallocate(t);
-    printf("NullMoth GPU: stage attach thread created\n");
-    /* Never wait for the worker while IOKit is still inside start(). */
-    printf("CUG-B1: start returning checkpoint=%u IF=%d\n",
-           __atomic_load_n(&attach_thread_stage_, __ATOMIC_ACQUIRE),
-           ml_get_interrupts_enabled());
+    /* Return without waiting for port startup, firmware or the worker. */
     return true;
 }
 
@@ -155,6 +137,8 @@ void NMXGPU::attachThread(void *arg, wait_result_t)
     /* No logging, registry operation or allocation before this checkpoint. */
     __atomic_store_n(&self->attach_thread_stage_, 1u, __ATOMIC_RELEASE);
     self->attachNow();
+    /* Release publishes all dev_/fb_/pm_ writes to stop(), not merely attach_. */
+    __atomic_store_n(&self->attach_thread_done_, 1u, __ATOMIC_RELEASE);
     self->release();
 }
 
@@ -214,15 +198,19 @@ static void nmx_marker_write(bool on)
 
 void NMXGPU::attachNow()
 {
-    printf("NullMoth GPU: stage attach thread entered; waiting for firmware root\n");
+    if (__atomic_load_n(&attach_cancel_, __ATOMIC_ACQUIRE)) {
+        attach_ = -1;
+        return;
+    }
+    printf("CUG-B2: worker entered; waiting for firmware root\n");
     __atomic_store_n(&attach_thread_stage_, 2u, __ATOMIC_RELEASE);
     setProperty("nullmoth-gpu-state", "waiting: firmware root");
     __atomic_store_n(&attach_thread_stage_, 3u, __ATOMIC_RELEASE);
     int err = nmx_xnu_wait_firmware_root(300);
     __atomic_store_n(&attach_thread_stage_, 4u, __ATOMIC_RELEASE);
     printf("NullMoth GPU: stage firmware-root wait returned %d\n", err);
-    if (err) {
-        printf("NullMoth GPU: the firmware folder never appeared (%d); this GPU stays with macOS\n", err);
+    if (err || __atomic_load_n(&attach_cancel_, __ATOMIC_ACQUIRE)) {
+        printf("NullMoth GPU: firmware wait failed or attachment cancelled (%d); this GPU stays with macOS\n", err);
         attach_ = -1;
         return;
     }
@@ -237,6 +225,40 @@ void NMXGPU::attachNow()
     }
     printf("NullMoth GPU: stage writing attach guard\n");
     nmx_marker_write(true);
+    setProperty("nullmoth-gpu-state", "initializing: port runtime");
+    IOLockLock(g_lock);
+    if (!g_started) {
+        int guc = 0;
+        if (PE_parse_boot_argn("nmxguc", &guc, sizeof(guc))) {
+            int policy_error = nmx_i915_set_guc_mode(guc);
+            if (policy_error) {
+                IOLockUnlock(g_lock);
+                printf("NullMoth GPU: invalid nmxguc=%d (expected 0..3)\n", guc);
+                nmx_marker_write(false);
+                attach_ = -1;
+                return;
+            }
+            printf("NullMoth GPU: explicit i915 enable_guc=%d before port initialization\n", guc);
+        }
+        printf("CUG-B2: before port-start IF=%d\n", ml_get_interrupts_enabled());
+        int err = nmx_port_start();
+        printf("CUG-B2: after port-start error=%d IF=%d\n", err, ml_get_interrupts_enabled());
+        if (err) {
+            IOLockUnlock(g_lock);
+            printf("NullMoth GPU: the driver layer did not start (%d)\n", err);
+            nmx_marker_write(false);
+            attach_ = -1;
+            return;
+        }
+        printf("NullMoth GPU: stage port-start returned successfully\n");
+        g_started = true;
+    }
+    IOLockUnlock(g_lock);
+    if (__atomic_load_n(&attach_cancel_, __ATOMIC_ACQUIRE)) {
+        nmx_marker_write(false);
+        attach_ = -1;
+        return;
+    }
     printf("NullMoth GPU: stage entering PCI driver attachment\n");
     setProperty("nullmoth-gpu-state", "attaching: PCI driver");
     dev_ = nmx_port_attach(pci_);
@@ -279,8 +301,11 @@ void NMXGPU::attachNow()
 
 void NMXGPU::stop(IOService *provider)
 {
-    /* an attach still running on its thread finishes first (it holds a reference on this object meanwhile) */
-    for (int i = 0; attach_ == 0 && i < 6000; i++)
+    /* A timeout cannot grant ownership of resources still used by a worker.
+       Cancellation prevents a queued worker from attaching; an in-flight driver
+       call must finish before any framebuffer, PM or PCI resource is detached. */
+    __atomic_store_n(&attach_cancel_, 1u, __ATOMIC_RELEASE);
+    while (!__atomic_load_n(&attach_thread_done_, __ATOMIC_ACQUIRE))
         IOSleep(100);
     provider->removeProperty("nmxgpu-claimed");
     if (fb_ != nullptr)
@@ -331,8 +356,12 @@ kern_return_t nmx_kmod_start(kmod_info_t *ki, void *data)
 kern_return_t nmx_kmod_stop(kmod_info_t *ki, void *data)
 {
     IOLockLock(g_lock);
+    if (g_devices > 0) {
+        IOLockUnlock(g_lock);
+        return KERN_FAILURE;
+    }
     if (g_started) {
-        if (g_devices > 0 || nmx_port_busy() > 0) {
+        if (nmx_port_busy() > 0) {
             IOLockUnlock(g_lock);
             printf("NullMoth GPU: still in use; not unloading\n");
             return KERN_FAILURE;

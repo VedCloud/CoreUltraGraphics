@@ -1,7 +1,7 @@
 name: Intel GuC and GGTT source rebuild
 on:
   push:
-    branches: [graphics-firmware-build]
+    branches: [graphics-firmware-build, graphics-startup-b2]
     paths: ['research/intel-port/**', '.github/workflows/intel-port.yml']
   workflow_dispatch:
     inputs:
@@ -27,6 +27,8 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 research/intel-port/tools/test-intel-bridge.py
+      - name: Test attach worker lifecycle and cancellation
+        run: python3 research/intel-port/tools/test-attach-lifecycle.py
       - name: Check the guarded Mac installer syntax
         run: |
           bash -n research/intel-port/tools/apply-source-fix.sh
