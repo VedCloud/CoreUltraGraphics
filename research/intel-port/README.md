@@ -31,6 +31,39 @@ Do not assume these options make existing USB payloads behave differently.
 See [the sanitized build summary](validation/local-build-summary.json) and
 [the hardware report](../../reports.md).
 
+## Linked candidate and controlled USB test
+
+[macOS run 39032518254](https://github.com/VedCloud2/CoreUltraGraphics/actions/runs/39032518254)
+successfully linked the 436-object Intel-only kext and passed its metadata/symbol
+checks. Binary SHA256:
+`3ed1770f0e61945c4501459b44ed49e3cfcacde3e861b78f69a70fa160825df9`.
+Hardware loading, display output and Metal execution remain unverified.
+
+The guarded installer is specifically for the already prepared **24H32 test USB**
+and its existing transaction/volume identities. It is not a standalone installer
+for arbitrary machines or EFIs. Its expected configuration and candidate hashes
+must match the staged package.
+
+For that prepared USB:
+
+1. Boot its parked configuration (`-nvoff`). The previous experimental driver stays
+   disabled while the new candidate is installed.
+2. Run the staged root-level script on the Mac:
+
+   ```sh
+   sudo /bin/bash "/Volumes/SEQOUIA/apply-intel-source-fix.sh"
+   ```
+
+3. Only after the script reports success, reboot through the USB. The installer
+   activates the configuration with `nmxguc=2` after verifying the new collection.
+4. If the desktop appears, run the existing native Metal test/collector. If it
+   fails to boot the desktop, use the separate working SSD and collect the report.
+
+The script backs up and restores the prior binary, metadata, auxiliary collection
+and parked configuration on an installation error. It does not modify the SSD EFI
+or automatically reboot. Driver files belong in `/Library/Extensions`, not simply
+in the EFI's kext directory; the user-space test stack is also required.
+
 ## Reproduce host tests
 
 Requires Python 3 and clang (the local workspace can alternatively use its bundled Zig).
@@ -71,9 +104,9 @@ performs a clean macOS build and retains logs on failure. The Windows source-bui
 toolchain cannot emit Apple's final `-kext` format. A failed Actions link must not
 be presented as a completed kext build.
 
-No tool here installs a kext, changes EFI, writes GPU registers on the host, rebuilds
-a running Mac's kernel collection or reboots a machine. Installation and native
-Metal testing remain separate hardware steps after a concrete artifact is reviewed.
+The source fetch/build tools do not install a kext or change EFI. The separate,
+guarded `apply-source-fix.sh` performs the explicit Mac installation described
+above; no tool automatically reboots. Native Metal testing is a separate step.
 
 ## Input identity
 

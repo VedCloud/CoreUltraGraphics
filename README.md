@@ -17,9 +17,11 @@ that GPU rendering works.
 | Upstream NMXAccel / ANV / Metal plug-in | Experimental user-space/accelerator stack used by the test kit | No successful native Metal compute result on this laptop |
 
 The source rebuild compiles **273 i915 units and 163 DRM/LinuxKPI/XNU/IOKit units**
-to x86-64 Mach-O objects. The local Windows linker does not support Apple's
-`-kext` output; the new macOS Actions workflow attempts the final link and retains
-its logs. Object compilation does not establish a loadable or usable driver.
+to x86-64 Mach-O objects. The macOS Actions build also compiled all 436 units and
+**successfully linked and inspected an Intel-only kext** in
+[run 39032518254](https://github.com/VedCloud2/CoreUltraGraphics/actions/runs/39032518254).
+Its binary SHA256 is `3ed1770f0e61945c4501459b44ed49e3cfcacde3e861b78f69a70fa160825df9`.
+Hardware loading and usability are still unverified.
 
 **[Read reports.md](reports.md)** for the hardware timeline, evidence hashes,
 precise failures, source repairs and remaining acceptance checks.
@@ -62,6 +64,7 @@ binary workarounds and the new source candidate are different artifacts.
 | Bitcount compatibility | 65,536 inputs checked | Portable helper semantics |
 | i915 compilation | 273 / 273 units | Real pinned headers; object compilation |
 | DRM/runtime/glue compilation | 163 / 163 units | Real pinned headers; object compilation |
+| macOS final kext link and inspection | Passed in run 39032518254 | 436 objects; `_kmod_info` and internal symbols checked |
 | Native Metal output validation | Not passed | Required hardware milestone |
 
 See [machine-readable local results](research/intel-port/validation/local-build-summary.json).
@@ -88,7 +91,7 @@ A CI artifact is not installed automatically and is not a compatibility certific
 
 ## Hardware acceptance still required
 
-1. Finish the final kext link and inspect imports, metadata and device matching.
+1. Install the inspected artifact using the guarded parked-USB test procedure.
 2. Build a kernel collection from permanent installed kext paths.
 3. Observe effective GuC policy, successful firmware initialization and an unwedged GT.
 4. Publish a valid framebuffer and reach a usable WindowServer desktop.

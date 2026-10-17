@@ -107,7 +107,9 @@ Private driver structure compatibility is checked, not assumed for arbitrary tre
 | Bitcount helpers | 65,536 inputs checked | Portable semantics |
 | i915 source units | 273 / 273 compile | Object compilation only |
 | DRM/runtime/glue units | 163 / 163 compile | Object compilation only |
-| Local final kext link | Windows Zig rejects `-kext` | macOS Actions required |
+| Local final kext link | Windows Zig rejects `-kext` | macOS/Xcode used instead |
+| macOS full source build | 273 + 163 units compile | Clean build in run 39032198815 |
+| macOS final link and inspection | Pass in run 39032518254 | No hardware execution implied |
 | Native Metal compute check | Not passed | Hardware acceptance required |
 
 The rebuild also repairs missing constant-bitcount/qsort declarations and older
@@ -127,7 +129,20 @@ Installer/KC success is separate from GPU initialization and Metal success.
 No new source candidate has been installed into the USB EFI in this report. The
 working SSD EFI is separate, and VoodooI2CHID is unchanged by this graphics work.
 
-The next hardware record must name a linked artifact and SHA256, effective GuC
+The linked candidate is available from
+[run 39032518254](https://github.com/VedCloud2/CoreUltraGraphics/actions/runs/39032518254).
+Binary SHA256: `3ed1770f0e61945c4501459b44ed49e3cfcacde3e861b78f69a70fa160825df9`.
+Artifact archive SHA256: `6f426e248e63006da00b8bf6fade201b631f18d49120d74be53bd7e01a53512a`.
+The link reused the passing macOS compilation with source-hash verification.
+The first link attempt failed because kernel runtime library search paths were
+missing; adding the pinned SDK paths and macOS sysroot resolved it.
+
+The guarded installer stages the candidate while the old driver is parked with
+`-nvoff`, backs up binary/metadata/collection/configuration, checks permanent KC
+paths and activates the new USB configuration last. Mac installation and the
+hardware boot have not been observed yet.
+
+The next hardware record must name the artifact and SHA256, effective GuC
 policy, initialization/wedge state, valid framebuffer dimensions/range,
 WindowServer result, and completed native Metal checker output.
 

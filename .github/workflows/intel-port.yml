@@ -23,6 +23,8 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 research/intel-port/tools/test-intel-bridge.py
+      - name: Check the guarded Mac installer syntax
+        run: bash -n research/intel-port/tools/apply-source-fix.sh
   macos-rebuild:
     needs: host-tests
     runs-on: macos-15-intel

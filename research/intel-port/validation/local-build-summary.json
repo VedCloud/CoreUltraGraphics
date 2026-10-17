@@ -15,10 +15,19 @@
     "limitations": "Production C control flow with kernel API doubles, not hardware/macos runtime validation."
   },
   "final_kext_link": {
-    "local_result": "Windows Zig reports unsupported linker arg: -kext",
-    "macos_actions": "Requested; inspect workflow results"
+    "result": "success",
+    "run_id": 39032518254,
+    "source_build_run": 39032198815,
+    "binary_sha256": "3ed1770f0e61945c4501459b44ed49e3cfcacde3e861b78f69a70fa160825df9",
+    "hardware_tested": false
   },
   "hardware_tested": false,
   "metal_verified": false,
-  "installed": false
+  "installed": false,
+  "macos_source_compile": {
+    "i915": 273,
+    "runtime": 163,
+    "run_id": 39032198815,
+    "result": "success"
+  }
 }
