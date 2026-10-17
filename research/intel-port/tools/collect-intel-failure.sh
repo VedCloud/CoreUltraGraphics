@@ -8,7 +8,7 @@ export PATH
 USB=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 OUT="$USB/CoreUltra-Reports/Intel-failed-boot-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$OUT"
-printf 'collector-version=5\n' > "$OUT/collector.txt"
+printf 'collector-version=6\n' > "$OUT/collector.txt"
 date '+local=%Y-%m-%dT%H:%M:%S%z' >> "$OUT/collector.txt"
 date -u '+utc=%Y-%m-%dT%H:%M:%SZ' >> "$OUT/collector.txt"
 sysctl kern.boottime >> "$OUT/collector.txt"
@@ -36,12 +36,14 @@ nvram nullmoth-gpu-attaching > "$OUT/attach-guard.txt" 2>&1 || true
 dmesg > "$OUT/dmesg.txt" 2>&1
 # These files were written during the earlier boot, before its volatile buffer vanished.
 mkdir -p "$OUT/live-boot-recordings"
-find /Library/Logs/CoreUltraGraphics -type f -mtime -2 -name '*.txt' 2>/dev/null |
-head -120 |
-while IFS= read -r file; do
-    boot=$(basename "$(dirname "$file")")
-    case "$boot" in Boot-*) ;; *) continue;; esac
-    head -c 524288 "$file" > "$OUT/live-boot-recordings/$boot-$(basename "$file")"
+ls -td /Library/Logs/CoreUltraGraphics/Boot-* 2>/dev/null | head -4 |
+while IFS= read -r bootdir; do
+    case "$bootdir" in /Library/Logs/CoreUltraGraphics/Boot-*) ;; *) continue;; esac
+    boot=$(basename "$bootdir")
+    find "$bootdir" -type f -name '*.txt' 2>/dev/null | head -110 |
+    while IFS= read -r file; do
+        head -c 524288 "$file" > "$OUT/live-boot-recordings/$boot-$(basename "$file")"
+    done
 done
 { ls -l /Library/KernelCollections/AuxiliaryKernelExtensions.kc;
   shasum -a 256 /Library/KernelCollections/AuxiliaryKernelExtensions.kc;

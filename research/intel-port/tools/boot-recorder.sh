@@ -30,25 +30,47 @@ chmod 700 "$OUT"
 WATCH=$!
 snapshot() {
     name=$1; shift
-    (ulimit -f 512; "$@") > "$OUT/$name.txt" 2>&1 &
+    printf 'begin %s\n' "$name" >> "$OUT/progress.txt"
+    (
+        trap - EXIT TERM INT
+        ulimit -f 512
+        exec "$@"
+    ) > "$OUT/$name.txt" 2>&1 &
     CHILD=$!
-    (sleep 4; kill -TERM "$CHILD" 2>/dev/null || true) &
-    timer=$!
-    wait "$CHILD" 2>/dev/null || true
-    kill "$timer" 2>/dev/null || true
-    wait "$timer" 2>/dev/null || true
+    # A signal cannot guarantee that a process blocked inside the kernel exits.
+    # Poll liveness; only reap after the process is already gone.
+    for second in 0 1 2 3 4; do
+        if ! kill -0 "$CHILD" 2>/dev/null; then
+            code=0
+            wait "$CHILD" 2>/dev/null || code=$?
+            printf '%s\n' "$code" > "$OUT/$name-exit.txt"
+            printf 'completed %s\n' "$name" >> "$OUT/progress.txt"
+            CHILD=
+            return 0
+        fi
+        [ "$second" = 4 ] || sleep 1
+    done
+    printf 'timeout %s; no wait for blocked process\n' "$name" >> "$OUT/progress.txt"
+    kill -TERM "$CHILD" 2>/dev/null || true
+    kill -KILL "$CHILD" 2>/dev/null || true
     CHILD=
+    return 1
 }
 {
-    echo recorder-version=1
+    echo recorder-version=2
     date -u
     sysctl kern.boottime kern.bootargs kern.bootsessionuuid
 } > "$OUT/boot.txt" 2>&1
-snapshot loaded-kexts kmutil showloaded
+REGISTRY_OK=1
 for tick in $(jot 24 1); do
     # Read the in-memory kernel buffer first, before any IOKit query can block.
-    snapshot "dmesg-$tick" /sbin/dmesg
-    snapshot "NMXGPU-$tick" ioreg -r -l -w 0 -c NMXGPU
+    if ! snapshot "dmesg-$tick" /sbin/dmesg; then
+        echo 'kernel buffer query did not complete; stopping without spawning repeated blocked readers' > "$OUT/recorder-finished.txt"
+        exit 0
+    fi
+    if [ "$REGISTRY_OK" = 1 ]; then
+        snapshot "NMXGPU-$tick" ioreg -r -l -w 0 -c NMXGPU || REGISTRY_OK=0
+    fi
     date -u > "$OUT/latest-snapshot.txt"
     sleep 5
 done
