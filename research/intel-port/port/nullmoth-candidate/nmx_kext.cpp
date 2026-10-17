@@ -106,10 +106,12 @@ bool NMXGPU::start(IOService *provider)
             IOService::stop(provider);
             return false;
         }
+        IOLog("NullMoth GPU: stage port-start returned successfully\n");
         g_started = true;
     }
     g_devices++;
     IOLockUnlock(g_lock);
+    IOLog("NullMoth GPU: stage start lock released\n");
 
     /*
      * amdgpu, i915 and xe load firmware while they attach. During boot matching that read would come before the root and
@@ -123,6 +125,7 @@ bool NMXGPU::start(IOService *provider)
     pm_ = false;
     attach_ = 0;
     retain();
+    IOLog("NullMoth GPU: stage creating attach thread\n");
     thread_t t = THREAD_NULL;
     if (kernel_thread_start(&NMXGPU::attachThread, this, &t) != KERN_SUCCESS) {
         IOLog("NullMoth GPU: could not start the attach thread\n");
@@ -131,6 +134,7 @@ bool NMXGPU::start(IOService *provider)
         return true;
     }
     thread_deallocate(t);
+    IOLog("NullMoth GPU: stage attach thread created\n");
     return true;
 }
 
@@ -197,12 +201,16 @@ static void nmx_marker_write(bool on)
 
 void NMXGPU::attachNow()
 {
+    IOLog("NullMoth GPU: stage attach thread entered; waiting for firmware root\n");
+    setProperty("nullmoth-gpu-state", "waiting: firmware root");
     int err = nmx_xnu_wait_firmware_root(300);
+    IOLog("NullMoth GPU: stage firmware-root wait returned %d\n", err);
     if (err) {
         IOLog("NullMoth GPU: the firmware folder never appeared (%d); this GPU stays with macOS\n", err);
         attach_ = -1;
         return;
     }
+    IOLog("NullMoth GPU: stage reading attach guard\n");
     if (nmx_marker_set()) {
         IOLog("NullMoth GPU: the last attach of %04x:%04x never returned (the Mac stopped or restarted); this GPU stays "
               "with macOS. Send logs, then turn the test driver off and on to try again\n",
@@ -211,8 +219,13 @@ void NMXGPU::attachNow()
         attach_ = -1;
         return;
     }
+    IOLog("NullMoth GPU: stage writing attach guard\n");
     nmx_marker_write(true);
+    IOLog("NullMoth GPU: stage entering PCI driver attachment\n");
+    setProperty("nullmoth-gpu-state", "attaching: PCI driver");
     dev_ = nmx_port_attach(pci_);
+    IOLog("NullMoth GPU: stage PCI driver attachment returned %s\n",
+          dev_ ? "device" : "null");
     if (dev_ == nullptr) {
         nmx_marker_write(false);
         IOLog("NullMoth GPU: no driver took %04x:%04x\n", pci_->configRead16(kIOPCIConfigVendorID),

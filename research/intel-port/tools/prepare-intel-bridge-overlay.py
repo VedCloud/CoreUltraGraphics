@@ -81,6 +81,31 @@ source = replace(source, claim, '''    fb_ = nmx_fb_publish(this, dev_);
     /* Start accelerator matching only after the framebuffer exists. */
     pci_->setProperty("nmxgpu-claimed", kOSBooleanTrue);
     pci_->registerService();''')
+# Boundaries before PCI matching were silent in the first source-build boot.
+# These messages describe entry/return only; none claims firmware or GPU success.
+source = replace(source, '        g_started = true;', '''        IOLog("NullMoth GPU: stage port-start returned successfully\\n");
+        g_started = true;''')
+source = replace(source, '    IOLockUnlock(g_lock);\n\n    /*', '''    IOLockUnlock(g_lock);
+    IOLog("NullMoth GPU: stage start lock released\\n");
+
+    /*''')
+source = replace(source, '    thread_t t = THREAD_NULL;', '''    IOLog("NullMoth GPU: stage creating attach thread\\n");
+    thread_t t = THREAD_NULL;''')
+source = replace(source, '    thread_deallocate(t);', '''    thread_deallocate(t);
+    IOLog("NullMoth GPU: stage attach thread created\\n");''')
+source = replace(source, '    int err = nmx_xnu_wait_firmware_root(300);', '''    IOLog("NullMoth GPU: stage attach thread entered; waiting for firmware root\\n");
+    setProperty("nullmoth-gpu-state", "waiting: firmware root");
+    int err = nmx_xnu_wait_firmware_root(300);
+    IOLog("NullMoth GPU: stage firmware-root wait returned %d\\n", err);''')
+source = replace(source, '    if (nmx_marker_set()) {', '''    IOLog("NullMoth GPU: stage reading attach guard\\n");
+    if (nmx_marker_set()) {''')
+source = replace(source, '    nmx_marker_write(true);\n    dev_ = nmx_port_attach(pci_);', '''    IOLog("NullMoth GPU: stage writing attach guard\\n");
+    nmx_marker_write(true);
+    IOLog("NullMoth GPU: stage entering PCI driver attachment\\n");
+    setProperty("nullmoth-gpu-state", "attaching: PCI driver");
+    dev_ = nmx_port_attach(pci_);
+    IOLog("NullMoth GPU: stage PCI driver attachment returned %s\\n",
+          dev_ ? "device" : "null");''')
 files.append(('xnu/nmx_kext.cpp', original, source))
 
 # Match the pinned kernel SDK's strnstr prototype without changing its search.

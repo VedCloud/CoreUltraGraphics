@@ -59,6 +59,9 @@ jobs:
           pattern: Intel-port-source-build-*
           path: research/intel-port/evidence/
           merge-multiple: true
+      - name: Recompile changed runtime sources after artifact reuse
+        if: inputs.reuse_run != ''
+        run: python3 research/intel-port/tools/compile-intel-runtime.py --retry-failed
       - name: Link and inspect experimental Intel-only kext
         env:
           SOURCE_BUILD_RUN: ${{ inputs.reuse_run || github.run_id }}

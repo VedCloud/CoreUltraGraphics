@@ -50,7 +50,10 @@ results=[]
 sources_to_build=sources
 if '--retry-failed' in sys.argv and (out/'results.json').exists():
     previous=json.loads((out/'results.json').read_text())
-    passed={r['source']:r for r in previous['results'] if r['exit_code']==0}
+    passed={r['source']:r for r in previous['results']
+            if r['exit_code']==0 and Path(r['source']).is_file()
+            and hashlib.sha256(Path(r['source']).read_bytes()).hexdigest()==r['sha256']
+            and (out/r['object']).is_file()}
     results=[passed[str(p)] for p in sources if str(p) in passed]
     sources_to_build=[p for p in sources if str(p) not in passed]
 with ThreadPoolExecutor(max_workers=4) as pool:
