@@ -5,6 +5,10 @@ on:
     paths: ['research/intel-port/**', '.github/workflows/intel-port.yml']
   workflow_dispatch:
     inputs:
+      scripts_only:
+        description: 'Validate diagnostics scripts without relinking the unchanged driver'
+        type: boolean
+        default: false
       reuse_run:
         description: 'Optional prior full source-build run; source hashes must still match'
         required: false
@@ -32,6 +36,7 @@ jobs:
           bash -n research/intel-port/tools/apply-worker-checkpoint.sh
           bash -n research/intel-port/tools/apply-recorded-test.sh
   macos-rebuild:
+    if: inputs.scripts_only != true
     needs: host-tests
     runs-on: macos-15-intel
     timeout-minutes: 35

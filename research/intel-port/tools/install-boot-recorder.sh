@@ -29,6 +29,7 @@ cat > "$PLIST" <<'PLIST'
 <key>ProcessType</key><string>Background</string>
 <key>ThrottleInterval</key><integer>60</integer>
 </dict></plist>
+PLIST
 chown root:wheel "$PLIST"
 chmod 644 "$PLIST"
 plutil -lint "$PLIST"
