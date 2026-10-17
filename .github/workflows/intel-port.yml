@@ -1,7 +1,7 @@
 name: Intel GuC and GGTT source rebuild
 on:
   push:
-    branches: [graphics-firmware-build, graphics-startup-b2, graphics-startup-b3]
+    branches: [graphics-firmware-build, graphics-startup-b2, graphics-startup-b3, graphics-startup-b4]
     paths: ['research/intel-port/**', '.github/workflows/intel-port.yml']
   workflow_dispatch:
     inputs:
@@ -51,7 +51,7 @@ jobs:
     runs-on: macos-15-intel
     timeout-minutes: 35
     env:
-      REUSE_RUN: ${{ inputs.reuse_run || (github.ref_name == 'graphics-startup-b3' && '39053708945') || '' }}
+      REUSE_RUN: ${{ inputs.reuse_run || (github.ref_name == 'graphics-startup-b4' && '39056634863') || (github.ref_name == 'graphics-startup-b3' && '39053708945') || '' }}
     steps:
       - uses: actions/checkout@v4
         with:

@@ -282,6 +282,46 @@ source = replace(source, '    self->attachNow();', r'''    printf("CUG-B3 W01: w
         self->attachNow();
     }''')
 
+# B4 shares exactly one runtime initializer between full attach and the
+# runtime-only diagnostic. No GPU attachment occurs for nmxdiag=2.
+source = replace(source, '    void attachNow();', '    void attachNow();\n    int startRuntime();')
+begin = source.index('    IOLockLock(g_lock);\n    if (!g_started)', source.index('void NMXGPU::attachNow()'))
+end = source.index('    if (__atomic_load_n(&attach_cancel_, __ATOMIC_ACQUIRE)) {', begin)
+runtime = source[begin:end]
+runtime = replace(runtime, '                nmx_marker_write(false);\n                attach_ = -1;\n                return;', '                return policy_error;')
+runtime = replace(runtime, '            nmx_marker_write(false);\n            attach_ = -1;\n            return;', '            return err;')
+source = source[:begin] + r'''    int runtime_error = startRuntime();
+    if (runtime_error) {
+        nmx_marker_write(false);
+        attach_ = -1;
+        return;
+    }
+''' + source[end:]
+source += '\nint NMXGPU::startRuntime()\n{\n' + runtime + '    return 0;\n}\n'
+source = replace(source, r'''    } else {
+        self->attachNow();
+    }''', r'''    } else if (diagnostic == 2) {
+        printf("CUG-B4 W10: runtime-only diagnostic; before firmware-root wait\n");
+        self->setProperty("nullmoth-gpu-state", "diagnostic: waiting for firmware root");
+        int err = nmx_xnu_wait_firmware_root(300);
+        printf("CUG-B4 W11: firmware-root wait returned %d\n", err);
+        if (!err && !__atomic_load_n(&self->attach_cancel_, __ATOMIC_ACQUIRE)) {
+            self->setProperty("nullmoth-gpu-state", "diagnostic: initializing port runtime");
+            err = self->startRuntime();
+            printf("CUG-B4 W12: port runtime returned %d; no PCI GPU attachment\n", err);
+        } else if (!err) {
+            err = -1;
+        }
+        self->setProperty("nullmoth-gpu-state", err ? "diagnostic: runtime failed or cancelled" :
+                          "diagnostic: port runtime ready; GPU not attached");
+        __atomic_store_n(&self->attach_thread_stage_, err ? 7u : 6u, __ATOMIC_RELEASE);
+        self->attach_ = -1;
+    } else {
+        self->attachNow();
+    }''')
+source = source.replace('CUG-HANDOFF-20261017-B3', 'CUG-HANDOFF-20261017-B4')
+source = source.replace('CUG-B3', 'CUG-B4').replace('CUG-B2', 'CUG-B4')
+
 files.append(('xnu/nmx_kext.cpp', original, source))
 
 # Expose each boundary inside the formerly silent synchronous port startup.
@@ -292,6 +332,7 @@ source = original[:begin] + '''#define STEP(call) do { printf("CUG-B1: port ente
     err = (call); printf("CUG-B1: port returned %s error=%d\\n", #call, err); \\
     if (err != 0) { nmx_port_stop(); return err; } stage++; } while (0)
 ''' + original[end:]
+source = source.replace('CUG-B1:', 'CUG-B4:')
 files.append(('bsdcompat/src/nmx_port.c', original, source))
 
 # Match the pinned kernel SDK's strnstr prototype without changing its search.

@@ -32,8 +32,8 @@ static int stage;       /* how far start got, so a failed start unwinds exactly 
 int nmx_port_start(void)
 {
     int err = 0;
-#define STEP(call) do { printf("CUG-B1: port entering %s\n", #call); \
-    err = (call); printf("CUG-B1: port returned %s error=%d\n", #call, err); \
+#define STEP(call) do { printf("CUG-B4: port entering %s\n", #call); \
+    err = (call); printf("CUG-B4: port returned %s error=%d\n", #call, err); \
     if (err != 0) { nmx_port_stop(); return err; } stage++; } while (0)
     stage = 0;
     STEP(nmx_kernel_init());

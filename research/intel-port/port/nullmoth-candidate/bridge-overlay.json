@@ -9,12 +9,12 @@
     {
       "path": "xnu/nmx_kext.cpp",
       "original_sha256": "b19c13eddef9bee26c3db25a871bbd54bba88c1750e5f03eda3ac079db4491b9",
-      "candidate_sha256": "562f37eb65b155704cc2e787f39621c1a0bf96f47f2981572a0ad0254b8b845e"
+      "candidate_sha256": "a0c1ba8545dd41c83b19305d836ed1f9b530b22fa5659db485b3e76eaa61ccfe"
     },
     {
       "path": "bsdcompat/src/nmx_port.c",
       "original_sha256": "82f1921c77fa008f0ae9d4680497214695a0c54627deae64421987fc6fe94b4d",
-      "candidate_sha256": "48e1271e0000f915f68d708e07bf0172da5d8d0b4ddfc19733419a55c55a42c8"
+      "candidate_sha256": "1659f08ad42d89939adde9a083c50e7b4d244e72331a44543a0d07398034580c"
     },
     {
       "path": "bsdcompat/src/nmx_misc.c",

@@ -46,6 +46,7 @@ class NMXGPU : public IOService {
     unsigned int attach_cancel_;
     static void attachThread(void *arg, wait_result_t);
     void attachNow();
+    int startRuntime();
 public:
     IOService *probe(IOService *provider, SInt32 *score) override;
     bool start(IOService *provider) override;
@@ -88,25 +89,25 @@ IOService *NMXGPU::probe(IOService *provider, SInt32 *score)
 
 bool NMXGPU::start(IOService *provider)
 {
-    printf("CUG-HANDOFF-20261017-B3: start entered IF=%d\n", ml_get_interrupts_enabled());
-    printf("CUG-B3 S01: before provider cast\n");
+    printf("CUG-HANDOFF-20261017-B4: start entered IF=%d\n", ml_get_interrupts_enabled());
+    printf("CUG-B4 S01: before provider cast\n");
     IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider);
-    printf("CUG-B3 S02: cast=%d lock=%d\n", pci != nullptr, g_lock != nullptr);
+    printf("CUG-B4 S02: cast=%d lock=%d\n", pci != nullptr, g_lock != nullptr);
     if (pci == nullptr || g_lock == nullptr)
         return false;
-    printf("CUG-B3 S03: before base start\n");
+    printf("CUG-B4 S03: before base start\n");
     bool base_started = IOService::start(provider);
-    printf("CUG-B3 S04: base returned %d\n", base_started);
+    printf("CUG-B4 S04: base returned %d\n", base_started);
     if (!base_started)
         return false;
     /* Count the service before scheduling: an unstarted runtime is not unloadable
        while a worker still holds code or the global lock. */
-    printf("CUG-B3 S05: before device-count lock\n");
+    printf("CUG-B4 S05: before device-count lock\n");
     IOLockLock(g_lock);
-    printf("CUG-B3 S06: device-count lock acquired\n");
+    printf("CUG-B4 S06: device-count lock acquired\n");
     g_devices++;
     IOLockUnlock(g_lock);
-    printf("CUG-B3 S07: device-count lock released\n");
+    printf("CUG-B4 S07: device-count lock released\n");
 
     /*
      * amdgpu, i915 and xe load firmware while they attach. During boot matching that read would come before the root and
@@ -122,17 +123,17 @@ bool NMXGPU::start(IOService *provider)
     __atomic_store_n(&attach_thread_stage_, 0u, __ATOMIC_RELEASE);
     __atomic_store_n(&attach_thread_done_, 0u, __ATOMIC_RELEASE);
     __atomic_store_n(&attach_cancel_, 0u, __ATOMIC_RELEASE);
-    printf("CUG-B3 S08: before build property\n");
-    setProperty("nullmoth-gpu-build", "CUG-HANDOFF-20261017-B3");
-    printf("CUG-B3 S09: build property returned; before state property\n");
+    printf("CUG-B4 S08: before build property\n");
+    setProperty("nullmoth-gpu-build", "CUG-HANDOFF-20261017-B4");
+    printf("CUG-B4 S09: build property returned; before state property\n");
     setProperty("nullmoth-gpu-state", "queued: attach worker");
-    printf("CUG-B3 S10: state property returned; before retain\n");
+    printf("CUG-B4 S10: state property returned; before retain\n");
     retain();
-    printf("CUG-B3 S11: retain returned\n");
+    printf("CUG-B4 S11: retain returned\n");
     thread_t t = THREAD_NULL;
-    printf("CUG-B3 S12: before kernel_thread_start\n");
+    printf("CUG-B4 S12: before kernel_thread_start\n");
     kern_return_t thread_result = kernel_thread_start(&NMXGPU::attachThread, this, &t);
-    printf("CUG-B3 S13: kernel_thread_start returned %d\n", thread_result);
+    printf("CUG-B4 S13: kernel_thread_start returned %d\n", thread_result);
     if (thread_result != KERN_SUCCESS) {
         attach_ = -1;
         __atomic_store_n(&attach_thread_done_, 1u, __ATOMIC_RELEASE);
@@ -143,9 +144,9 @@ bool NMXGPU::start(IOService *provider)
         IOService::stop(provider);
         return false;
     }
-    printf("CUG-B3 S14: before thread reference release\n");
+    printf("CUG-B4 S14: before thread reference release\n");
     thread_deallocate(t);
-    printf("CUG-B3 S15: start returning; worker checkpoint=%u\n",
+    printf("CUG-B4 S15: start returning; worker checkpoint=%u\n",
            __atomic_load_n(&attach_thread_stage_, __ATOMIC_ACQUIRE));
     return true;
 }
@@ -155,13 +156,29 @@ void NMXGPU::attachThread(void *arg, wait_result_t)
     NMXGPU *self = (NMXGPU *)arg;
     /* No logging, registry operation or allocation before this checkpoint. */
     __atomic_store_n(&self->attach_thread_stage_, 1u, __ATOMIC_RELEASE);
-    printf("CUG-B3 W01: worker callback entered\n");
+    printf("CUG-B4 W01: worker callback entered\n");
     int diagnostic = 0;
     if (PE_parse_boot_argn("nmxdiag", &diagnostic, sizeof(diagnostic)) && diagnostic == 1) {
         self->setProperty("nullmoth-gpu-state", "diagnostic: worker ran; hardware untouched");
         __atomic_store_n(&self->attach_thread_stage_, 5u, __ATOMIC_RELEASE);
         self->attach_ = -1;
-        printf("CUG-B3 W02: worker-only diagnostic complete; no port or display initialization\n");
+        printf("CUG-B4 W02: worker-only diagnostic complete; no port or display initialization\n");
+    } else if (diagnostic == 2) {
+        printf("CUG-B4 W10: runtime-only diagnostic; before firmware-root wait\n");
+        self->setProperty("nullmoth-gpu-state", "diagnostic: waiting for firmware root");
+        int err = nmx_xnu_wait_firmware_root(300);
+        printf("CUG-B4 W11: firmware-root wait returned %d\n", err);
+        if (!err && !__atomic_load_n(&self->attach_cancel_, __ATOMIC_ACQUIRE)) {
+            self->setProperty("nullmoth-gpu-state", "diagnostic: initializing port runtime");
+            err = self->startRuntime();
+            printf("CUG-B4 W12: port runtime returned %d; no PCI GPU attachment\n", err);
+        } else if (!err) {
+            err = -1;
+        }
+        self->setProperty("nullmoth-gpu-state", err ? "diagnostic: runtime failed or cancelled" :
+                          "diagnostic: port runtime ready; GPU not attached");
+        __atomic_store_n(&self->attach_thread_stage_, err ? 7u : 6u, __ATOMIC_RELEASE);
+        self->attach_ = -1;
     } else {
         self->attachNow();
     }
@@ -230,7 +247,7 @@ void NMXGPU::attachNow()
         attach_ = -1;
         return;
     }
-    printf("CUG-B2: worker entered; waiting for firmware root\n");
+    printf("CUG-B4: worker entered; waiting for firmware root\n");
     __atomic_store_n(&attach_thread_stage_, 2u, __ATOMIC_RELEASE);
     setProperty("nullmoth-gpu-state", "waiting: firmware root");
     __atomic_store_n(&attach_thread_stage_, 3u, __ATOMIC_RELEASE);
@@ -254,34 +271,12 @@ void NMXGPU::attachNow()
     printf("NullMoth GPU: stage writing attach guard\n");
     nmx_marker_write(true);
     setProperty("nullmoth-gpu-state", "initializing: port runtime");
-    IOLockLock(g_lock);
-    if (!g_started) {
-        int guc = 0;
-        if (PE_parse_boot_argn("nmxguc", &guc, sizeof(guc))) {
-            int policy_error = nmx_i915_set_guc_mode(guc);
-            if (policy_error) {
-                IOLockUnlock(g_lock);
-                printf("NullMoth GPU: invalid nmxguc=%d (expected 0..3)\n", guc);
-                nmx_marker_write(false);
-                attach_ = -1;
-                return;
-            }
-            printf("NullMoth GPU: explicit i915 enable_guc=%d before port initialization\n", guc);
-        }
-        printf("CUG-B2: before port-start IF=%d\n", ml_get_interrupts_enabled());
-        int err = nmx_port_start();
-        printf("CUG-B2: after port-start error=%d IF=%d\n", err, ml_get_interrupts_enabled());
-        if (err) {
-            IOLockUnlock(g_lock);
-            printf("NullMoth GPU: the driver layer did not start (%d)\n", err);
-            nmx_marker_write(false);
-            attach_ = -1;
-            return;
-        }
-        printf("NullMoth GPU: stage port-start returned successfully\n");
-        g_started = true;
+    int runtime_error = startRuntime();
+    if (runtime_error) {
+        nmx_marker_write(false);
+        attach_ = -1;
+        return;
     }
-    IOLockUnlock(g_lock);
     if (__atomic_load_n(&attach_cancel_, __ATOMIC_ACQUIRE)) {
         nmx_marker_write(false);
         attach_ = -1;
@@ -410,4 +405,33 @@ kern_return_t _stop(kmod_info_t *ki, void *data);
 KMOD_EXPLICIT_DECL(com.nullmoth.NMXGPU, "1.0.0", _start, _stop)
 __private_extern__ kmod_start_func_t *_realmain = nmx_kmod_start;
 __private_extern__ kmod_stop_func_t *_antimain = nmx_kmod_stop;
+}
+
+int NMXGPU::startRuntime()
+{
+    IOLockLock(g_lock);
+    if (!g_started) {
+        int guc = 0;
+        if (PE_parse_boot_argn("nmxguc", &guc, sizeof(guc))) {
+            int policy_error = nmx_i915_set_guc_mode(guc);
+            if (policy_error) {
+                IOLockUnlock(g_lock);
+                printf("NullMoth GPU: invalid nmxguc=%d (expected 0..3)\n", guc);
+                return policy_error;
+            }
+            printf("NullMoth GPU: explicit i915 enable_guc=%d before port initialization\n", guc);
+        }
+        printf("CUG-B4: before port-start IF=%d\n", ml_get_interrupts_enabled());
+        int err = nmx_port_start();
+        printf("CUG-B4: after port-start error=%d IF=%d\n", err, ml_get_interrupts_enabled());
+        if (err) {
+            IOLockUnlock(g_lock);
+            printf("NullMoth GPU: the driver layer did not start (%d)\n", err);
+            return err;
+        }
+        printf("NullMoth GPU: stage port-start returned successfully\n");
+        g_started = true;
+    }
+    IOLockUnlock(g_lock);
+    return 0;
 }

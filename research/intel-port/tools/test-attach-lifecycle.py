@@ -34,7 +34,7 @@ static IOLock global_lock;
 static bool g_started;
 static int g_devices;
 static IOLock *g_lock=&global_lock;
-static int refs, thread_error, port_error, root_error, port_starts, port_stops, diagnostic_mode;
+static int refs, thread_error, port_error, root_error, port_starts, port_stops, diagnostic_mode, pci_attaches;
 static int detach_calls, fb_unpublish, sleeps, run_at_sleep, claims;
 static bool in_start, marker, firmware_ready;
 static void (*queued)(void*,int); static void *queued_arg;
@@ -64,7 +64,7 @@ static int nmx_port_busy() {return 0;}
 static int nmx_xnu_wait_firmware_root(int) {firmware_ready=!root_error;return root_error;}
 static bool nmx_marker_set() {return marker;}
 static void nmx_marker_write(bool v) {marker=v;}
-static void *nmx_port_attach(void*) {return (void*)2;}
+static void *nmx_port_attach(void*) {++pci_attaches;return (void*)2;}
 static void nmx_port_detach(void*) {++detach_calls;}
 static void OSSynchronizeIO() {}
 struct IOPMPowerState {unsigned long a,b,c,d,e,f,g,h,i,j,k,l;};
@@ -92,14 +92,14 @@ public:
  void *dev_; IOService *fb_; IOPCIDevice *pci_; volatile int attach_; bool pm_;
  unsigned attach_thread_stage_,attach_thread_done_,attach_cancel_;
  bool start(IOService*) override; void stop(IOService*) override;
- static void attachThread(void*,int); void attachNow();
+ static void attachThread(void*,int); void attachNow(); int startRuntime();
 };
 '''
 body='\n'.join(method(s) for s in ['bool NMXGPU::start(', 'void NMXGPU::attachThread(',
-    'void NMXGPU::attachNow(', 'void NMXGPU::stop(', 'kern_return_t nmx_kmod_stop('])
+    'void NMXGPU::attachNow(', 'int NMXGPU::startRuntime(', 'void NMXGPU::stop(', 'kern_return_t nmx_kmod_stop('])
 cases=r'''
 static void reset() {
- refs=thread_error=port_error=root_error=port_starts=port_stops=diagnostic_mode=0;
+ refs=thread_error=port_error=root_error=port_starts=port_stops=diagnostic_mode=pci_attaches=0;
  detach_calls=fb_unpublish=sleeps=run_at_sleep=claims=g_devices=0;
  in_start=marker=firmware_ready=g_started=false;
  queued=nullptr;g_lock=&global_lock;
@@ -140,7 +140,24 @@ int main() {
    assert(!port_starts && !claims && !marker && !firmware_ready && !g_started && refs==0);
    gpu.stop(&pci);assert(!g_devices && !fb_unpublish);
  }
- puts("PASS: 6 production lifecycle scenarios, including late worker join and hardware-free diagnostic");
+ { reset();NMXGPU gpu{};diagnostic_mode=2;
+   assert(start(gpu,pci));run_worker();
+   assert(gpu.attach_thread_stage_==6 && gpu.attach_thread_done_==1);
+   assert(port_starts==1 && g_started && !pci_attaches && !claims && !marker);
+   gpu.stop(&pci);assert(!g_devices && !fb_unpublish);
+   assert(nmx_kmod_stop(nullptr,nullptr)==0 && port_stops==1);
+ }
+ { reset();NMXGPU gpu{};diagnostic_mode=2;port_error=12;
+   assert(start(gpu,pci));run_worker();assert(gpu.attach_thread_stage_==7);
+   assert(port_starts==1 && !g_started && !pci_attaches && !claims && !marker);
+   gpu.stop(&pci);assert(!g_devices);
+ }
+ { reset();NMXGPU gpu{};diagnostic_mode=2;root_error=60;
+   assert(start(gpu,pci));run_worker();assert(gpu.attach_thread_stage_==7);
+   assert(!port_starts && !pci_attaches && !claims && !marker);
+   gpu.stop(&pci);assert(!g_devices);
+ }
+ puts("PASS: 9 production lifecycle scenarios, including runtime-only success and failures");
 }
 '''
 file=out/'lifecycle.cpp';file.write_text(shim+body+cases,newline='\n')
