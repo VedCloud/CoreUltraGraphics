@@ -1,7 +1,7 @@
 name: Intel GuC and GGTT source rebuild
 on:
   push:
-    branches: [graphics-firmware-build, graphics-startup-b2]
+    branches: [graphics-firmware-build, graphics-startup-b2, graphics-startup-b3]
     paths: ['research/intel-port/**', '.github/workflows/intel-port.yml']
   workflow_dispatch:
     inputs:
@@ -48,6 +48,8 @@ jobs:
     needs: host-tests
     runs-on: macos-15-intel
     timeout-minutes: 35
+    env:
+      REUSE_RUN: ${{ inputs.reuse_run || (github.ref_name == 'graphics-startup-b3' && '39053708945') || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,7 +59,7 @@ jobs:
       - name: Generate source overlay
         run: python3 research/intel-port/tools/prepare-intel-bridge-overlay.py
       - name: Compile changed components against real headers
-        if: inputs.reuse_run == ''
+        if: env.REUSE_RUN == ''
         shell: bash
         run: |
           set -euo pipefail
@@ -65,25 +67,25 @@ jobs:
             python3 research/intel-port/tools/compile-intel-bridge.py "$source"
           done
       - name: Rebuild i915 and the DRM port runtime
-        if: inputs.reuse_run == ''
+        if: env.REUSE_RUN == ''
         run: |
           python3 research/intel-port/tools/compile-intel-driver.py
           python3 research/intel-port/tools/compile-intel-runtime.py
       - name: Reuse compiled objects with source-hash validation at link
-        if: inputs.reuse_run != ''
+        if: env.REUSE_RUN != ''
         uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
-          run-id: ${{ inputs.reuse_run }}
+          run-id: ${{ env.REUSE_RUN }}
           pattern: Intel-port-source-build-*
           path: research/intel-port/evidence/
           merge-multiple: true
       - name: Recompile changed runtime sources after artifact reuse
-        if: inputs.reuse_run != ''
+        if: env.REUSE_RUN != ''
         run: python3 research/intel-port/tools/compile-intel-runtime.py --retry-failed
       - name: Link and inspect experimental Intel-only kext
         env:
-          SOURCE_BUILD_RUN: ${{ inputs.reuse_run || github.run_id }}
+          SOURCE_BUILD_RUN: ${{ github.run_id }}
         run: python3 research/intel-port/tools/link-intel-port.py
       - name: Preserve build logs and any linked artifact
         if: always()

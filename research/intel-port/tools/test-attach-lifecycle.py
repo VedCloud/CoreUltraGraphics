@@ -16,6 +16,7 @@ shim=r'''
 #include <cassert>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 using SInt32=int; using IOReturn=int; using IOOptionBits=unsigned;
 using wait_result_t=int; using thread_t=void*; using kern_return_t=int;
 struct kmod_info_t {};
@@ -33,7 +34,7 @@ static IOLock global_lock;
 static bool g_started;
 static int g_devices;
 static IOLock *g_lock=&global_lock;
-static int refs, thread_error, port_error, root_error, port_starts, port_stops;
+static int refs, thread_error, port_error, root_error, port_starts, port_stops, diagnostic_mode;
 static int detach_calls, fb_unpublish, sleeps, run_at_sleep, claims;
 static bool in_start, marker, firmware_ready;
 static void (*queued)(void*,int); static void *queued_arg;
@@ -52,7 +53,10 @@ static void IOSleep(int) {
     assert(sleeps<7000);
 }
 static int ml_get_interrupts_enabled() {return 1;}
-static bool PE_parse_boot_argn(const char*,int *v,unsigned) {*v=2;return true;}
+static bool PE_parse_boot_argn(const char *name,int *v,unsigned) {
+    if(!strcmp(name,"nmxdiag")) {*v=diagnostic_mode;return diagnostic_mode!=0;}
+    *v=2;return true;
+}
 static int nmx_i915_set_guc_mode(int) {return 0;}
 static int nmx_port_start() {assert(!in_start && firmware_ready);++port_starts;return port_error;}
 static void nmx_port_stop() {++port_stops;}
@@ -95,7 +99,7 @@ body='\n'.join(method(s) for s in ['bool NMXGPU::start(', 'void NMXGPU::attachTh
     'void NMXGPU::attachNow(', 'void NMXGPU::stop(', 'kern_return_t nmx_kmod_stop('])
 cases=r'''
 static void reset() {
- refs=thread_error=port_error=root_error=port_starts=port_stops=0;
+ refs=thread_error=port_error=root_error=port_starts=port_stops=diagnostic_mode=0;
  detach_calls=fb_unpublish=sleeps=run_at_sleep=claims=g_devices=0;
  in_start=marker=firmware_ready=g_started=false;
  queued=nullptr;g_lock=&global_lock;
@@ -130,7 +134,13 @@ int main() {
    gpu.stop(&pci); // old code detached after 6000 without joining
    assert(sleeps==6002 && !queued && refs==0 && !port_starts && !g_devices);
  }
- puts("PASS: 5 production lifecycle scenarios, including worker held beyond old stop timeout");
+ { reset();NMXGPU gpu{};diagnostic_mode=1;
+   assert(start(gpu,pci));run_worker();
+   assert(gpu.attach_thread_stage_==5 && gpu.attach_thread_done_==1);
+   assert(!port_starts && !claims && !marker && !firmware_ready && !g_started && refs==0);
+   gpu.stop(&pci);assert(!g_devices && !fb_unpublish);
+ }
+ puts("PASS: 6 production lifecycle scenarios, including late worker join and hardware-free diagnostic");
 }
 '''
 file=out/'lifecycle.cpp';file.write_text(shim+body+cases,newline='\n')

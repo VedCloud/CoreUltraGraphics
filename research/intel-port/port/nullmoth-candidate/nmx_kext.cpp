@@ -88,15 +88,25 @@ IOService *NMXGPU::probe(IOService *provider, SInt32 *score)
 
 bool NMXGPU::start(IOService *provider)
 {
-    printf("CUG-HANDOFF-20261017-B2: start entered IF=%d\n", ml_get_interrupts_enabled());
+    printf("CUG-HANDOFF-20261017-B3: start entered IF=%d\n", ml_get_interrupts_enabled());
+    printf("CUG-B3 S01: before provider cast\n");
     IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider);
-    if (pci == nullptr || g_lock == nullptr || !IOService::start(provider))
+    printf("CUG-B3 S02: cast=%d lock=%d\n", pci != nullptr, g_lock != nullptr);
+    if (pci == nullptr || g_lock == nullptr)
+        return false;
+    printf("CUG-B3 S03: before base start\n");
+    bool base_started = IOService::start(provider);
+    printf("CUG-B3 S04: base returned %d\n", base_started);
+    if (!base_started)
         return false;
     /* Count the service before scheduling: an unstarted runtime is not unloadable
        while a worker still holds code or the global lock. */
+    printf("CUG-B3 S05: before device-count lock\n");
     IOLockLock(g_lock);
+    printf("CUG-B3 S06: device-count lock acquired\n");
     g_devices++;
     IOLockUnlock(g_lock);
+    printf("CUG-B3 S07: device-count lock released\n");
 
     /*
      * amdgpu, i915 and xe load firmware while they attach. During boot matching that read would come before the root and
@@ -112,11 +122,18 @@ bool NMXGPU::start(IOService *provider)
     __atomic_store_n(&attach_thread_stage_, 0u, __ATOMIC_RELEASE);
     __atomic_store_n(&attach_thread_done_, 0u, __ATOMIC_RELEASE);
     __atomic_store_n(&attach_cancel_, 0u, __ATOMIC_RELEASE);
-    setProperty("nullmoth-gpu-build", "CUG-HANDOFF-20261017-B2");
+    printf("CUG-B3 S08: before build property\n");
+    setProperty("nullmoth-gpu-build", "CUG-HANDOFF-20261017-B3");
+    printf("CUG-B3 S09: build property returned; before state property\n");
     setProperty("nullmoth-gpu-state", "queued: attach worker");
+    printf("CUG-B3 S10: state property returned; before retain\n");
     retain();
+    printf("CUG-B3 S11: retain returned\n");
     thread_t t = THREAD_NULL;
-    if (kernel_thread_start(&NMXGPU::attachThread, this, &t) != KERN_SUCCESS) {
+    printf("CUG-B3 S12: before kernel_thread_start\n");
+    kern_return_t thread_result = kernel_thread_start(&NMXGPU::attachThread, this, &t);
+    printf("CUG-B3 S13: kernel_thread_start returned %d\n", thread_result);
+    if (thread_result != KERN_SUCCESS) {
         attach_ = -1;
         __atomic_store_n(&attach_thread_done_, 1u, __ATOMIC_RELEASE);
         release();
@@ -126,8 +143,10 @@ bool NMXGPU::start(IOService *provider)
         IOService::stop(provider);
         return false;
     }
+    printf("CUG-B3 S14: before thread reference release\n");
     thread_deallocate(t);
-    /* Return without waiting for port startup, firmware or the worker. */
+    printf("CUG-B3 S15: start returning; worker checkpoint=%u\n",
+           __atomic_load_n(&attach_thread_stage_, __ATOMIC_ACQUIRE));
     return true;
 }
 
@@ -136,7 +155,16 @@ void NMXGPU::attachThread(void *arg, wait_result_t)
     NMXGPU *self = (NMXGPU *)arg;
     /* No logging, registry operation or allocation before this checkpoint. */
     __atomic_store_n(&self->attach_thread_stage_, 1u, __ATOMIC_RELEASE);
-    self->attachNow();
+    printf("CUG-B3 W01: worker callback entered\n");
+    int diagnostic = 0;
+    if (PE_parse_boot_argn("nmxdiag", &diagnostic, sizeof(diagnostic)) && diagnostic == 1) {
+        self->setProperty("nullmoth-gpu-state", "diagnostic: worker ran; hardware untouched");
+        __atomic_store_n(&self->attach_thread_stage_, 5u, __ATOMIC_RELEASE);
+        self->attach_ = -1;
+        printf("CUG-B3 W02: worker-only diagnostic complete; no port or display initialization\n");
+    } else {
+        self->attachNow();
+    }
     /* Release publishes all dev_/fb_/pm_ writes to stop(), not merely attach_. */
     __atomic_store_n(&self->attach_thread_done_, 1u, __ATOMIC_RELEASE);
     self->release();

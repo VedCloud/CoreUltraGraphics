@@ -227,6 +227,61 @@ source = replace(source, r'''    IOLockLock(g_lock);
     if (g_started) {
         if (nmx_port_busy() > 0) {''')
 
+# B3 records every external-call boundary in start, and offers a worker-only
+# diagnostic mode that leaves the GPU hardware and display ownership untouched.
+source = source.replace('CUG-HANDOFF-20261017-B2', 'CUG-HANDOFF-20261017-B3')
+source = replace(source, r'''    IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider);
+    if (pci == nullptr || g_lock == nullptr || !IOService::start(provider))
+        return false;''', r'''    printf("CUG-B3 S01: before provider cast\n");
+    IOPCIDevice *pci = OSDynamicCast(IOPCIDevice, provider);
+    printf("CUG-B3 S02: cast=%d lock=%d\n", pci != nullptr, g_lock != nullptr);
+    if (pci == nullptr || g_lock == nullptr)
+        return false;
+    printf("CUG-B3 S03: before base start\n");
+    bool base_started = IOService::start(provider);
+    printf("CUG-B3 S04: base returned %d\n", base_started);
+    if (!base_started)
+        return false;''')
+source = replace(source, r'''    IOLockLock(g_lock);
+    g_devices++;
+    IOLockUnlock(g_lock);''', r'''    printf("CUG-B3 S05: before device-count lock\n");
+    IOLockLock(g_lock);
+    printf("CUG-B3 S06: device-count lock acquired\n");
+    g_devices++;
+    IOLockUnlock(g_lock);
+    printf("CUG-B3 S07: device-count lock released\n");''')
+source = replace(source, r'''    setProperty("nullmoth-gpu-build", "CUG-HANDOFF-20261017-B3");
+    setProperty("nullmoth-gpu-state", "queued: attach worker");
+    retain();''', r'''    printf("CUG-B3 S08: before build property\n");
+    setProperty("nullmoth-gpu-build", "CUG-HANDOFF-20261017-B3");
+    printf("CUG-B3 S09: build property returned; before state property\n");
+    setProperty("nullmoth-gpu-state", "queued: attach worker");
+    printf("CUG-B3 S10: state property returned; before retain\n");
+    retain();
+    printf("CUG-B3 S11: retain returned\n");''')
+source = replace(source, '    if (kernel_thread_start(&NMXGPU::attachThread, this, &t) != KERN_SUCCESS) {',
+    r'''    printf("CUG-B3 S12: before kernel_thread_start\n");
+    kern_return_t thread_result = kernel_thread_start(&NMXGPU::attachThread, this, &t);
+    printf("CUG-B3 S13: kernel_thread_start returned %d\n", thread_result);
+    if (thread_result != KERN_SUCCESS) {''')
+source = replace(source, r'''    thread_deallocate(t);
+    /* Return without waiting for port startup, firmware or the worker. */
+    return true;''', r'''    printf("CUG-B3 S14: before thread reference release\n");
+    thread_deallocate(t);
+    printf("CUG-B3 S15: start returning; worker checkpoint=%u\n",
+           __atomic_load_n(&attach_thread_stage_, __ATOMIC_ACQUIRE));
+    return true;''')
+source = replace(source, '    self->attachNow();', r'''    printf("CUG-B3 W01: worker callback entered\n");
+    int diagnostic = 0;
+    if (PE_parse_boot_argn("nmxdiag", &diagnostic, sizeof(diagnostic)) && diagnostic == 1) {
+        self->setProperty("nullmoth-gpu-state", "diagnostic: worker ran; hardware untouched");
+        __atomic_store_n(&self->attach_thread_stage_, 5u, __ATOMIC_RELEASE);
+        self->attach_ = -1;
+        printf("CUG-B3 W02: worker-only diagnostic complete; no port or display initialization\n");
+    } else {
+        self->attachNow();
+    }''')
+
 files.append(('xnu/nmx_kext.cpp', original, source))
 
 # Expose each boundary inside the formerly silent synchronous port startup.

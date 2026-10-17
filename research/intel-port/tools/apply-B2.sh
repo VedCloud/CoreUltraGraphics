@@ -52,9 +52,12 @@ CINFO="$PACKAGE/NMXGPU.kext/Contents/Info.plist"
 [ "$(cug_get "$CINFO" IOKitPersonalities:NMXGPUIntel:IOPCIPrimaryMatch)" = 0x7d458086 ] || cug_die 'Wrong candidate match scope.'
 CFG="$USB/EFI/OC/config.plist"
 [ -f "$CFG" ] && [ ! -L "$CFG" ] || cug_die 'Missing or linked USB configuration.'
-[ "$(cug_sha "$CFG")" = "$(cug_sha "$PACKAGE/parked.plist")" ] || cug_die 'USB parked configuration changed.'
-[ "$(cug_sha "$PACKAGE/parked.plist")" = fbe4d026822fbd843013c79eee00ba7bb7f9d598750252207fea2e78207149d9 ] || cug_die 'Parked configuration checksum failed.'
-[ "$(cug_sha "$PACKAGE/active.plist")" = 361281606a1ab0ddb6fda6bc968e5a818dac66de208a6fdea6328f692e7064c7 ] || cug_die 'Active configuration checksum failed.'
+# Normalize plist serialization; package hashes below still pin every expected setting.
+plutil -convert xml1 -o "$WORK/current-config.xml" "$CFG" || cug_die 'Invalid USB configuration plist.'
+plutil -convert xml1 -o "$WORK/parked-config.xml" "$PACKAGE/parked.plist" || cug_die 'Invalid parked configuration plist.'
+cmp -s "$WORK/current-config.xml" "$WORK/parked-config.xml" || cug_die 'USB settings differ from B2 parked configuration. Use apply-intel-B2-test.sh from the prepared USB.' 
+[ "$(cug_sha "$PACKAGE/parked.plist")" = c0299392e5c2c3ab2cdfd66f0a4c8e6973d76c412a6b5e762b1918213da581c6 ] || cug_die 'Parked configuration checksum failed.'
+[ "$(cug_sha "$PACKAGE/active.plist")" = 0add45cc851d0573eb625aba23a9e7828502cf3436fe737de5e9eb2940f4b87f ] || cug_die 'Active configuration checksum failed.'
 LIVE=/Library/Extensions/NMXGPU.kext/Contents/MacOS/NMXGPU
 LINFO=/Library/Extensions/NMXGPU.kext/Contents/Info.plist
 KC=/Library/KernelCollections/AuxiliaryKernelExtensions.kc
